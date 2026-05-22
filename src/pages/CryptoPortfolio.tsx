@@ -5,8 +5,8 @@ import {
   Globe, ChevronDown, ArrowLeft, Clock, Shield, Zap, Activity,
 } from 'lucide-react';
 import {
-  searchCoins, getCoinDetails, getMarketChart, getDefiLlamaData,
-  type CoinSearchResult, type CoinDetails, type MarketChart, type DefiLlamaProtocol,
+  searchCoins, getCoinDetails, getMarketChart, getDefiLlamaData, getTopCoins,
+  type CoinSearchResult, type CoinDetails, type MarketChart, type DefiLlamaProtocol, type TopCoin,
 } from '../services/cryptoApi';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -433,6 +433,90 @@ function ValueProp({ coin, cat, defi }: { coin: CoinDetails; cat: CategoryInfo; 
   );
 }
 
+// ─── Top Coins Grid ───────────────────────────────────────────────────────────
+
+function TopCoinsGrid({ onSelect }: { onSelect: (id: string) => void }) {
+  const [coins, setCoins] = useState<TopCoin[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('');
+
+  useEffect(() => {
+    getTopCoins()
+      .then(setCoins)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const visible = filter.trim()
+    ? coins.filter(c =>
+        c.name.toLowerCase().includes(filter.toLowerCase()) ||
+        c.symbol.toLowerCase().includes(filter.toLowerCase())
+      )
+    : coins;
+
+  if (loading) return (
+    <div className="text-center py-10 text-slate-500 text-sm">
+      <div className="inline-block w-5 h-5 border-2 border-slate-600 border-t-blue-400 animate-spin mb-2" style={{ borderRadius: '50%' }} />
+      <div>Top 200 werden geladen…</div>
+    </div>
+  );
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-slate-400 text-xs uppercase tracking-widest flex items-center gap-2">
+          <BarChart2 size={13} /> Top {coins.length} nach Marktkapitalisierung
+        </div>
+        <input
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          placeholder="Filtern…"
+          className="bg-white/5 border border-white/10 text-white text-sm px-3 py-1.5 placeholder-slate-600 outline-none w-36"
+          style={{ borderRadius: 6 }}
+        />
+      </div>
+
+      <div className="overflow-hidden border border-white/10" style={{ borderRadius: 8 }}>
+        {/* Header */}
+        <div className="grid grid-cols-[40px_1fr_90px_90px_90px] gap-2 px-4 py-2 bg-white/5 text-xs text-slate-500 uppercase tracking-widest border-b border-white/10">
+          <span>#</span>
+          <span>Name</span>
+          <span className="text-right">Preis</span>
+          <span className="text-right">24h</span>
+          <span className="text-right hidden sm:block">MarktKap</span>
+        </div>
+
+        {/* Scrollable rows */}
+        <div className="overflow-y-auto" style={{ maxHeight: 480 }}>
+          {visible.length === 0 && (
+            <div className="text-center py-8 text-slate-600 text-sm">Keine Treffer</div>
+          )}
+          {visible.map(coin => {
+            const pct = coin.price_change_percentage_24h;
+            return (
+              <button
+                key={coin.id}
+                onClick={() => onSelect(coin.id)}
+                className="w-full grid grid-cols-[40px_1fr_90px_90px_90px] gap-2 px-4 py-2.5 hover:bg-white/6 transition-colors text-left border-b border-white/5 last:border-0 cursor-pointer"
+              >
+                <span className="text-slate-600 text-xs self-center">{coin.market_cap_rank}</span>
+                <span className="flex items-center gap-2 min-w-0">
+                  <img src={coin.image} alt={coin.name} className="w-6 h-6 shrink-0" style={{ borderRadius: '50%' }} />
+                  <span className="text-white text-sm font-medium truncate">{coin.name}</span>
+                  <span className="text-slate-600 text-xs uppercase hidden md:inline">{coin.symbol}</span>
+                </span>
+                <span className="text-right text-white text-sm self-center font-mono">{fmt(coin.current_price)}</span>
+                <span className={`text-right text-sm self-center font-semibold ${pctColor(pct)}`}>{fmtPct(pct)}</span>
+                <span className="text-right text-slate-400 text-xs self-center hidden sm:block">{fmt(coin.market_cap)}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Search ───────────────────────────────────────────────────────────────────
 
 function SearchBar({ onSelect }: { onSelect: (id: string) => void }) {
@@ -784,7 +868,6 @@ function Dashboard({ data, onBack }: { data: DashboardData; onBack: () => void }
 
 type State = { type: 'idle' } | { type: 'loading' } | { type: 'loaded'; data: DashboardData } | { type: 'error'; message: string };
 
-const QUICK_IDS = ['bitcoin', 'ethereum', 'solana', 'sui', 'uniswap', 'chainlink', 'aave', 'dogecoin'];
 
 export default function CryptoPortfolio() {
   const [state, setState] = useState<State>({ type: 'idle' });
@@ -854,20 +937,8 @@ export default function CryptoPortfolio() {
         <div className="mt-8">
           {state.type === 'idle' && (
             <div>
-              <div className="text-center py-10">
-                <div className="text-5xl mb-4">🔍</div>
-                <div className="text-slate-500 mb-5">Suche nach Bitcoin, Ethereum, Solana, SUI…</div>
-                <div className="flex flex-wrap justify-center gap-2">
-                  {QUICK_IDS.map(id => (
-                    <button key={id} onClick={() => load(id)}
-                      className="px-4 py-2 bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 text-sm transition-colors capitalize cursor-pointer"
-                      style={{ borderRadius: 6 }}>
-                      {id === 'sui' ? 'SUI' : id.charAt(0).toUpperCase() + id.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
               <HistoryPanel history={history} onSelect={load} onClear={clearHistory} />
+              <TopCoinsGrid onSelect={load} />
             </div>
           )}
           {state.type === 'loading' && (

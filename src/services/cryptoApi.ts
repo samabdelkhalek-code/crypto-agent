@@ -80,6 +80,31 @@ export interface DefiLlamaProtocol {
   fees30d?: number;
 }
 
+export interface TopCoin {
+  id: string;
+  symbol: string;
+  name: string;
+  image: string;
+  current_price: number;
+  market_cap: number;
+  market_cap_rank: number;
+  price_change_percentage_24h: number;
+  total_volume: number;
+}
+
+let topCoinsCache: TopCoin[] | null = null;
+
+export async function getTopCoins(): Promise<TopCoin[]> {
+  if (topCoinsCache) return topCoinsCache;
+  const base = `${COINGECKO_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&sparkline=false&price_change_percentage=24h`;
+  const [p1, p2] = await Promise.all([
+    fetch(`${base}&page=1`).then(r => r.ok ? r.json() : []),
+    fetch(`${base}&page=2`).then(r => r.ok ? r.json() : []),
+  ]);
+  topCoinsCache = [...p1, ...p2];
+  return topCoinsCache!;
+}
+
 export async function searchCoins(query: string): Promise<CoinSearchResult[]> {
   const res = await fetch(`${COINGECKO_BASE}/search?query=${encodeURIComponent(query)}`);
   if (!res.ok) throw new Error('Suche fehlgeschlagen');

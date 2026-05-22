@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  Search, ExternalLink, Twitter, Github, TrendingUp,
+  Search, ExternalLink, MessageCircle, GitBranch, TrendingUp,
   Flame, Lock, Users, BarChart2, AlertTriangle, CheckCircle,
-  Globe, ChevronDown,
+  Globe, ChevronDown, ArrowLeft, Clock, Shield, Zap, Activity,
 } from 'lucide-react';
 import {
   searchCoins, getCoinDetails, getMarketChart, getDefiLlamaData,
@@ -52,68 +52,92 @@ function ago(dateStr: string | null): string {
   return years > 0 ? `${years} Jahr${years > 1 ? 'e' : ''}` : '< 1 Jahr';
 }
 
+// ─── Category ────────────────────────────────────────────────────────────────
+
 interface CategoryInfo {
   label: string; gradient: string; badge: string;
   audience: string; emoji: string; blurb: string;
+  problem: string; solution: string;
 }
 
 function getCategoryInfo(categories: string[]): CategoryInfo {
   const c = categories.map((x) => x.toLowerCase()).join(' ');
-  // L1 / L2 checked first — win over any ecosystem sub-tags
   if (c.includes('layer 1') || c.includes('smart contract platform') || c.includes('proof of work') || c.includes('proof of stake')) return {
     label: 'Layer-1 Blockchain', gradient: 'from-blue-600/30 to-sky-600/20', badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
     audience: 'Entwickler, Unternehmen & alle die dezentrale Apps nutzen', emoji: '🌐',
     blurb: 'Eine eigenständige Blockchain, auf der Entwickler dezentrale Anwendungen (dApps) und Smart Contracts erstellen können.',
+    problem: 'Zentralisierte Server können zensiert, gehackt oder abgeschaltet werden. Nutzer verlassen sich auf Intermediäre, die ihre Daten kontrollieren.',
+    solution: 'Eine dezentrale Blockchain läuft auf tausenden Computern gleichzeitig — kein einzelner Akteur kann sie abschalten oder zensieren. Entwickler bauen darauf Apps ohne Erlaubnis.',
   };
   if (c.includes('layer 2') || c.includes('rollup') || categories.some(cat => /^layer.?2$/i.test(cat) || /^optimism$/i.test(cat) || /^arbitrum$/i.test(cat))) return {
     label: 'Layer-2 Skalierung', gradient: 'from-violet-600/30 to-purple-600/20', badge: 'bg-violet-500/20 text-violet-300 border-violet-500/30',
     audience: 'Nutzer, die günstigere & schnellere Transaktionen wollen', emoji: '⚡',
     blurb: 'Layer-2 baut auf einer bestehenden Blockchain auf und macht Transaktionen dramatisch günstiger und schneller.',
+    problem: 'Ethereum-Transaktionen können $10–$100 kosten und Minuten dauern. Das macht kleine Zahlungen und häufige Interaktionen unwirtschaftlich.',
+    solution: 'Layer-2 bündelt Tausende Transaktionen zusammen und verarbeitet sie off-chain — Kosten sinken auf Cents, Geschwindigkeit steigt auf Sekunden.',
   };
   if (c.includes('oracle')) return {
     label: 'Blockchain-Oracle', gradient: 'from-blue-600/30 to-indigo-600/20', badge: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
     audience: 'Entwickler, die reale Daten in Blockchains einbinden', emoji: '🔮',
     blurb: 'Oracles verbinden Blockchains mit der realen Welt — sie liefern verlässliche Preis-, Wetter- und andere Echtdaten für Smart Contracts.',
+    problem: 'Blockchains können von sich aus keine Daten aus der realen Welt abrufen (Aktienkurse, Wetter, Sportergebnisse). Ohne verlässliche Datenquellen sind viele Smart Contracts nutzlos.',
+    solution: 'Oracle-Netzwerke aggregieren Daten aus vielen unabhängigen Quellen, prüfen sie und liefern manipulationssichere Echtdaten direkt in Smart Contracts.',
   };
   if (c.includes('meme')) return {
     label: 'Meme-Coin', gradient: 'from-pink-600/30 to-rose-600/20', badge: 'bg-pink-500/20 text-pink-300 border-pink-500/30',
     audience: 'Spekulanten & Community-Mitglieder', emoji: '🎭',
     blurb: 'Ein Meme-Coin basiert primär auf Community-Hype und Viral-Marketing, nicht auf technologischem Nutzen.',
+    problem: 'Kein klassisches technisches Problem — der Mehrwert liegt in der Community-Zugehörigkeit und viraler Verbreitung.',
+    solution: 'Durch starke Online-Community und Social-Media-Präsenz erzeugt er Nachfrage. Der Wert entsteht durch kollektives Glauben und Spekulation.',
   };
   if (c.includes('gaming') || c.includes('play-to-earn')) return {
     label: 'Blockchain-Gaming', gradient: 'from-green-600/30 to-teal-600/20', badge: 'bg-green-500/20 text-green-300 border-green-500/30',
     audience: 'Gamer, die digitale Assets wirklich besitzen wollen', emoji: '🎮',
     blurb: 'Ein Gaming-Token ermöglicht echtes Eigentum an In-Game-Items und Belohnungen in Blockchain-Spielen.',
+    problem: 'In klassischen Spielen gehören Items dem Hersteller. Spieler investieren hunderte Stunden, können aber nie wirklich Eigentümer ihrer digitalen Gegenstände sein.',
+    solution: 'Blockchain-Gaming-Token verbriefen echtes Eigentum: Items werden als NFTs gehalten, können gehandelt werden und gehören dem Spieler — nicht dem Studio.',
   };
   if (c.includes('nft')) return {
     label: 'NFT & Digitale Kunst', gradient: 'from-orange-600/30 to-yellow-600/20', badge: 'bg-orange-500/20 text-orange-300 border-orange-500/30',
     audience: 'Kreative, Sammler & Künstler', emoji: '🎨',
     blurb: 'NFT-Plattformen ermöglichen den Kauf, Verkauf und die Erstellung einzigartiger digitaler Kunstwerke und Sammlerstücke.',
+    problem: 'Digitale Dateien sind kopierbar — Künstler können keine Echtheit oder Knappheit ihrer Werke beweisen. Provenienz und Urheberschaft sind schwer nachweisbar.',
+    solution: 'NFTs schaffen digitale Knappheit: jedes Token ist einzigartig, die Eigentumshistorie ist öffentlich auf der Blockchain nachverfolgbar.',
   };
   if (c.includes('decentralized exchange') || c.includes('automated market')) return {
     label: 'Dezentrale Börse', gradient: 'from-cyan-600/30 to-blue-600/20', badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
     audience: 'Trader und DeFi-Nutzer', emoji: '🔄',
     blurb: 'Eine dezentrale Börse (DEX) ermöglicht den direkten Handel von Krypto-Assets ohne zentrale Kontrollinstanz.',
+    problem: 'Zentralisierte Börsen (Binance, Coinbase) kontrollieren die Gelder der Nutzer. Bei Hacks oder Insolvenzen verlieren Nutzer alles — wie bei FTX geschehen.',
+    solution: 'DEXs erlauben direkten Handel Wallet-zu-Wallet. Niemand verwahrt die Gelder der Nutzer — Transaktionen laufen autonom über Smart Contracts.',
   };
   if (c.includes('defi') || c.includes('lending') || c.includes('stablecoin') || c.includes('yield')) return {
     label: 'Decentralized Finance', gradient: 'from-yellow-600/30 to-amber-600/20', badge: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
     audience: 'Nutzer ohne Bankzugang & erfahrene DeFi-Anleger', emoji: '🏦',
     blurb: 'DeFi-Protokolle ersetzen traditionelle Finanzdienstleistungen (Kredite, Zinsen, Handel) durch transparente Smart Contracts.',
+    problem: '1,4 Milliarden Menschen weltweit haben keinen Zugang zu Bankdienstleistungen. Selbst wer eine Bank hat, erhält kaum Zinsen und zahlt hohe Gebühren.',
+    solution: 'DeFi-Protokolle sind für jeden zugänglich — nur eine Wallet wird benötigt. Kredite, Zinsen und Handel laufen ohne Intermediäre, transparent und 24/7.',
   };
   if (c.includes('privacy') || c.includes('zero knowledge')) return {
-    label: 'Privacy & ZK', gradient: 'from-gray-600/30 to-slate-600/20', badge: 'bg-gray-500/20 text-gray-300 border-gray-500/30',
+    label: 'Privacy & ZK', gradient: 'from-gray-600/30 to-slate-600/20', badge: 'bg-gray-500/20 text-gray-300 border-slate-500/30',
     audience: 'Datenschutz-bewusste Nutzer & Entwickler', emoji: '🔒',
     blurb: 'Privacy-Protokolle schützen Transaktionsdaten und ermöglichen anonyme oder vertrauliche Zahlungen.',
+    problem: 'Öffentliche Blockchains sind vollständig transparent — jeder kann sehen, wer wann wieviel wohin überwiesen hat. Das ist für viele Anwendungen inakzeptabel.',
+    solution: 'Zero-Knowledge-Proofs erlauben es, die Gültigkeit einer Transaktion zu beweisen, ohne deren Inhalt preiszugeben. Datenschutz ohne Vertrauensanforderung.',
   };
   if (c.includes('exchange') || c.includes('derivatives')) return {
     label: 'Krypto-Börse', gradient: 'from-cyan-600/30 to-blue-600/20', badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
     audience: 'Trader, die Krypto-Assets kaufen und verkaufen wollen', emoji: '🏛️',
     blurb: 'Ein Börsen-Token berechtigt zu reduzierten Handelsgebühren und Governance-Rechten auf der jeweiligen Krypto-Handelsplattform.',
+    problem: 'Krypto-Handelsbörsen verdienen Milliarden — Token-Inhaber profitieren davon, wenn der Exchange-Token ihnen Rabatte und Stimmrechte sichert.',
+    solution: 'Der Exchange-Token teilt den Plattform-Erfolg mit Nutzern: Gebührenrabatte, Staking-Renditen und Governance-Mitsprache direkt proportional zum Token-Besitz.',
   };
   return {
     label: 'Krypto-Token', gradient: 'from-slate-600/30 to-slate-700/20', badge: 'bg-slate-500/20 text-slate-300 border-slate-500/30',
     audience: 'Crypto-Investoren & Technologie-Interessierte', emoji: '💎',
     blurb: 'Ein dezentralisiertes digitales Asset auf der Blockchain mit spezifischen Nutzungsanwendungen im jeweiligen Ökosystem.',
+    problem: 'Spezifisches Problem und Anwendungsfall des Projekts — Details im Whitepaper des Projekts.',
+    solution: 'Token-basiertes Anreizsystem zur Koordination eines dezentralisierten Netzwerks oder Ökosystems.',
   };
 }
 
@@ -138,6 +162,76 @@ function getRiskLevel(coin: CoinDetails): { label: string; color: string; score:
   if (score >= 55) return { label: 'Niedrig', color: 'text-emerald-400', score };
   if (score >= 30) return { label: 'Mittel', color: 'text-yellow-400', score };
   return { label: 'Hoch', color: 'text-red-400', score };
+}
+
+// ─── History ──────────────────────────────────────────────────────────────────
+
+interface HistoryEntry {
+  id: string; name: string; symbol: string; image: string;
+  price: number; pct24h: number | null; marketCap: number;
+  riskLabel: string; riskColor: string;
+  categoryEmoji: string; categoryLabel: string; ts: number;
+}
+
+const HISTORY_KEY = 'crypto-history';
+
+function loadHistory(): HistoryEntry[] {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; }
+}
+
+function saveHistory(entries: HistoryEntry[]) {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
+}
+
+function HistoryCard({ entry, onSelect }: { entry: HistoryEntry; onSelect: (id: string) => void }) {
+  const pct = entry.pct24h;
+  return (
+    <button
+      onClick={() => onSelect(entry.id)}
+      className="text-left w-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 p-3 transition-all cursor-pointer"
+      style={{ borderRadius: 8 }}
+    >
+      <div className="flex items-center gap-2.5 mb-2">
+        {entry.image
+          ? <img src={entry.image} alt={entry.name} className="w-7 h-7 shrink-0" style={{ borderRadius: '50%' }} />
+          : <div className="w-7 h-7 shrink-0 bg-white/10 flex items-center justify-center text-xs" style={{ borderRadius: '50%' }}>{entry.symbol[0]}</div>
+        }
+        <div className="min-w-0">
+          <div className="text-white text-sm font-semibold truncate">{entry.name}</div>
+          <div className="text-slate-500 text-xs uppercase">{entry.symbol}</div>
+        </div>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-white text-sm font-mono">{fmt(entry.price)}</span>
+        {pct != null && (
+          <span className={`text-xs font-semibold ${pctColor(pct)}`}>{fmtPct(pct)}</span>
+        )}
+      </div>
+      <div className="flex items-center justify-between mt-1.5">
+        <span className="text-slate-500 text-xs">{entry.categoryEmoji} {entry.categoryLabel}</span>
+        <span className={`text-xs font-semibold ${entry.riskColor}`}>{entry.riskLabel}</span>
+      </div>
+    </button>
+  );
+}
+
+function HistoryPanel({ history, onSelect, onClear }: { history: HistoryEntry[]; onSelect: (id: string) => void; onClear: () => void }) {
+  if (history.length === 0) return null;
+  return (
+    <div className="mt-8">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 text-slate-400 text-xs uppercase tracking-widest">
+          <Clock size={13} /> Zuletzt analysiert
+        </div>
+        <button onClick={onClear} className="text-slate-600 hover:text-slate-400 text-xs transition-colors cursor-pointer bg-transparent border-none">
+          Verlauf löschen
+        </button>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        {history.map(e => <HistoryCard key={e.id} entry={e} onSelect={onSelect} />)}
+      </div>
+    </div>
+  );
 }
 
 // ─── Sparkline ────────────────────────────────────────────────────────────────
@@ -229,6 +323,116 @@ function StatusBadge({ live }: { live: boolean }) {
   );
 }
 
+// ─── Value Proposition ────────────────────────────────────────────────────────
+
+interface DashboardData { coin: CoinDetails; chart: MarketChart; defi: DefiLlamaProtocol | null; }
+
+function ValueProp({ coin, cat, defi }: { coin: CoinDetails; cat: CategoryInfo; defi: DefiLlamaProtocol | null }) {
+  const md = coin.market_data;
+  const tvl = (defi?.tvl ?? 0) >= 1_000_000 ? defi!.tvl : undefined;
+  const rev30 = tvl ? (defi?.revenue30d ?? defi?.revenue) : undefined;
+  const pct1y = md.price_change_percentage_1y_in_currency?.usd;
+  const hasBurn = coin.categories.join(' ').toLowerCase().includes('burn') ||
+    (md.total_supply != null && md.max_supply != null && md.total_supply < md.max_supply * 0.99);
+  const deflationary = md.max_supply == null && md.total_supply != null;
+
+  const strengths: string[] = [];
+  if (md.market_cap_rank && md.market_cap_rank <= 10)
+    strengths.push(`Top-10 Krypto-Asset weltweit (Rang #${md.market_cap_rank})`);
+  else if (md.market_cap_rank && md.market_cap_rank <= 50)
+    strengths.push(`Unter den Top 50 nach Marktkapitalisierung (Rang #${md.market_cap_rank})`);
+  else if (md.market_cap_rank && md.market_cap_rank <= 100)
+    strengths.push(`Etabliert in den Top 100 (Rang #${md.market_cap_rank})`);
+  if (coin.developer_data.commit_count_4_weeks > 50)
+    strengths.push(`Sehr aktive Entwicklung: ${coin.developer_data.commit_count_4_weeks} Commits in den letzten 4 Wochen`);
+  else if (coin.developer_data.commit_count_4_weeks > 10)
+    strengths.push(`Aktive Entwicklung: ${coin.developer_data.commit_count_4_weeks} Commits in 4 Wochen`);
+  if (tvl)
+    strengths.push(`${fmt(tvl)} gesperrtes Kapital (TVL) — starkes Nutzervertrauen`);
+  if (rev30 && rev30 > 0)
+    strengths.push(`Generiert echte Einnahmen: ${fmt(rev30)} in 30 Tagen`);
+  if (coin.community_data.twitter_followers > 500_000)
+    strengths.push(`Massive Community: ${fmtNum(coin.community_data.twitter_followers)} X/Twitter-Follower`);
+  else if (coin.community_data.twitter_followers > 100_000)
+    strengths.push(`Große Community: ${fmtNum(coin.community_data.twitter_followers)} X/Twitter-Follower`);
+  if (pct1y != null && pct1y > 50)
+    strengths.push(`Starke Preis-Performance: +${pct1y.toFixed(0)}% im letzten Jahr`);
+  if (hasBurn || deflationary)
+    strengths.push('Deflationäres Token-Modell — Burns reduzieren das Angebot');
+  if (coin.developer_data.stars > 5000)
+    strengths.push(`Open Source mit großer Entwickler-Community: ${fmtNum(coin.developer_data.stars)} GitHub Stars`);
+
+  const risks: string[] = [];
+  if (!md.market_cap_rank || md.market_cap_rank > 100)
+    risks.push('Außerhalb der Top 100 — erhöhtes Liquiditäts- und Ausfallrisiko');
+  if (md.max_supply && md.circulating_supply < md.max_supply * 0.5)
+    risks.push(`Noch ${((1 - md.circulating_supply / md.max_supply) * 100).toFixed(0)}% der Tokens ausstehend — mögliche Verwässerung des Preises`);
+  if (coin.developer_data.commit_count_4_weeks === 0)
+    risks.push('Keine aktuelle Entwickler-Aktivität nachweisbar');
+  if (pct1y != null && pct1y < -50)
+    risks.push(`Starker Wertverlust im letzten Jahr: ${pct1y.toFixed(0)}%`);
+  if (!coin.genesis_date || new Date(coin.genesis_date).getFullYear() >= 2023)
+    risks.push('Relativ junges Projekt — wenig historische Daten verfügbar');
+
+  return (
+    <div className="border border-white/10 p-6 bg-white/3" style={{ borderRadius: 10 }}>
+      <h3 className="text-sm font-bold text-slate-300 uppercase tracking-widest mb-5 m-0 flex items-center gap-2">
+        <Zap size={15} className="text-yellow-400" /> Mehrwert & Investitionsthese
+      </h3>
+
+      {/* Problem / Lösung */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <div className="bg-red-500/8 border border-red-500/20 p-4" style={{ borderRadius: 8 }}>
+          <div className="text-xs font-bold text-red-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+            <AlertTriangle size={12} /> Das Problem
+          </div>
+          <p className="text-slate-300 text-sm leading-relaxed m-0">{cat.problem}</p>
+        </div>
+        <div className="bg-emerald-500/8 border border-emerald-500/20 p-4" style={{ borderRadius: 8 }}>
+          <div className="text-xs font-bold text-emerald-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+            <CheckCircle size={12} /> Die Lösung
+          </div>
+          <p className="text-slate-300 text-sm leading-relaxed m-0">{cat.solution}</p>
+        </div>
+      </div>
+
+      {/* Stärken & Risiken */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {strengths.length > 0 && (
+          <div>
+            <div className="text-xs font-bold text-emerald-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+              <Shield size={12} /> Stärken ({strengths.length})
+            </div>
+            <div className="space-y-2">
+              {strengths.map((s, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm">
+                  <span className="text-emerald-400 shrink-0 mt-0.5">✓</span>
+                  <span className="text-slate-300">{s}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {risks.length > 0 && (
+          <div>
+            <div className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+              <AlertTriangle size={12} /> Risiken ({risks.length})
+            </div>
+            <div className="space-y-2">
+              {risks.map((r, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm">
+                  <span className="text-red-400 shrink-0 mt-0.5">⚠</span>
+                  <span className="text-slate-300">{r}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Search ───────────────────────────────────────────────────────────────────
 
 function SearchBar({ onSelect }: { onSelect: (id: string) => void }) {
@@ -263,7 +467,7 @@ function SearchBar({ onSelect }: { onSelect: (id: string) => void }) {
         <Search className="text-slate-400 shrink-0" size={20} />
         <input
           type="text" value={query} onChange={handleChange}
-          placeholder="Token-Name oder Symbol eingeben… (z.B. Bitcoin, ETH, Uniswap)"
+          placeholder="Token-Name oder Symbol eingeben… (z.B. Bitcoin, ETH, SUI)"
           className="flex-1 bg-transparent text-white placeholder-slate-500 outline-none text-base"
         />
         {loading && <div className="w-4 h-4 border-2 border-slate-500 border-t-blue-400 animate-spin" style={{ borderRadius: '50%' }} />}
@@ -272,7 +476,7 @@ function SearchBar({ onSelect }: { onSelect: (id: string) => void }) {
         <div className="absolute top-full left-0 right-0 mt-2 z-50 overflow-hidden" style={{ borderRadius: 8, background: '#1a2035', border: '1px solid rgba(255,255,255,0.15)' }}>
           {results.map((r) => (
             <button key={r.id} onClick={() => { onSelect(r.id); setQuery(r.name); setOpen(false); }}
-              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/8 transition-colors text-left">
+              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/8 transition-colors text-left cursor-pointer">
               {r.thumb && <img src={r.thumb} alt={r.name} className="w-7 h-7" style={{ borderRadius: '50%' }} />}
               <div className="flex-1 min-w-0">
                 <span className="text-white font-medium">{r.name}</span>
@@ -289,9 +493,7 @@ function SearchBar({ onSelect }: { onSelect: (id: string) => void }) {
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
-interface DashboardData { coin: CoinDetails; chart: MarketChart; defi: DefiLlamaProtocol | null; }
-
-function Dashboard({ data }: { data: DashboardData }) {
+function Dashboard({ data, onBack }: { data: DashboardData; onBack: () => void }) {
   const { coin, chart, defi } = data;
   const md = coin.market_data;
   const cat = getCategoryInfo(coin.categories);
@@ -315,6 +517,12 @@ function Dashboard({ data }: { data: DashboardData }) {
 
   return (
     <div className="space-y-5">
+      {/* Back button */}
+      <button onClick={onBack}
+        className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors cursor-pointer bg-transparent border-none p-0">
+        <ArrowLeft size={16} /> Zurück zur Übersicht
+      </button>
+
       {/* Identity */}
       <div className={`relative overflow-hidden border border-white/10 p-6 bg-gradient-to-br ${cat.gradient}`} style={{ borderRadius: 10 }}>
         <div className="flex flex-col md:flex-row gap-4 md:items-start">
@@ -368,6 +576,9 @@ function Dashboard({ data }: { data: DashboardData }) {
         </div>
       </div>
 
+      {/* Value Proposition */}
+      <ValueProp coin={coin} cat={cat} defi={defi} />
+
       {/* 5 KPI cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <MetricCard label="💰 Preis" value={fmt(md.current_price.usd)} sub={fmtPct(pct24)} color={pctColor(pct24)} />
@@ -386,8 +597,8 @@ function Dashboard({ data }: { data: DashboardData }) {
           <div className="mb-4"><Sparkline prices={chart.prices} /></div>
           <div className="space-y-2.5">
             <ChangeRow label="24 Stunden" value={pct24} barMax={30} />
-            <ChangeRow label="30 Tage"    value={pct30} barMax={100} />
             <ChangeRow label="7 Tage"     value={pct7}  barMax={50} />
+            <ChangeRow label="30 Tage"    value={pct30} barMax={100} />
             <ChangeRow label="1 Jahr"     value={pct1y} barMax={500} />
           </div>
           <div className="mt-4 pt-4 border-t border-white/8 grid grid-cols-2 gap-3">
@@ -440,7 +651,7 @@ function Dashboard({ data }: { data: DashboardData }) {
             </div>
             {coin.links.repos_url?.github?.[0] && (
               <a href={coin.links.repos_url.github[0]} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center gap-1 text-slate-400 hover:text-white text-xs">
-                <Github size={12} /> GitHub <ExternalLink size={10} />
+                <GitBranch size={12} /> GitHub <ExternalLink size={10} />
               </a>
             )}
           </div>
@@ -502,7 +713,7 @@ function Dashboard({ data }: { data: DashboardData }) {
           </h3>
           <div className="space-y-3">
             {coin.community_data.twitter_followers > 0 && (
-              <div className="flex items-center justify-between"><span className="text-slate-400 text-sm flex items-center gap-1.5"><Twitter size={13} /> Twitter/X Follower</span><span className="text-white font-semibold">{fmtNum(coin.community_data.twitter_followers)}</span></div>
+              <div className="flex items-center justify-between"><span className="text-slate-400 text-sm flex items-center gap-1.5"><MessageCircle size={13} /> Twitter/X Follower</span><span className="text-white font-semibold">{fmtNum(coin.community_data.twitter_followers)}</span></div>
             )}
             {coin.community_data.reddit_subscribers > 0 && (
               <div className="flex items-center justify-between"><span className="text-slate-400 text-sm">Reddit Mitglieder</span><span className="text-white font-semibold">{fmtNum(coin.community_data.reddit_subscribers)}</span></div>
@@ -513,7 +724,7 @@ function Dashboard({ data }: { data: DashboardData }) {
           <div className="mt-4 pt-4 border-t border-white/8 flex flex-wrap gap-3">
             {coin.links.twitter_screen_name && (
               <a href={`https://twitter.com/${coin.links.twitter_screen_name}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-xs text-slate-400 hover:text-blue-400 transition-colors">
-                <Twitter size={12} /> @{coin.links.twitter_screen_name}
+                <MessageCircle size={12} /> @{coin.links.twitter_screen_name}
               </a>
             )}
           </div>
@@ -559,6 +770,12 @@ function Dashboard({ data }: { data: DashboardData }) {
           ⚠️ Diese Analyse dient ausschließlich zu Informationszwecken und stellt keine Finanzberatung dar. Daten von CoinGecko & DeFiLlama.
         </div>
       </div>
+
+      {/* Back button bottom */}
+      <button onClick={onBack}
+        className="flex items-center gap-2 text-slate-500 hover:text-slate-300 text-sm transition-colors cursor-pointer bg-transparent border-none p-0 pb-4">
+        <ArrowLeft size={14} /> Neue Analyse starten
+      </button>
     </div>
   );
 }
@@ -567,8 +784,13 @@ function Dashboard({ data }: { data: DashboardData }) {
 
 type State = { type: 'idle' } | { type: 'loading' } | { type: 'loaded'; data: DashboardData } | { type: 'error'; message: string };
 
+const QUICK_IDS = ['bitcoin', 'ethereum', 'solana', 'sui', 'uniswap', 'chainlink', 'aave', 'dogecoin'];
+
 export default function CryptoPortfolio() {
   const [state, setState] = useState<State>({ type: 'idle' });
+  const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
+
+  const goHome = useCallback(() => setState({ type: 'idle' }), []);
 
   const load = useCallback(async (id: string) => {
     setState({ type: 'loading' });
@@ -576,20 +798,54 @@ export default function CryptoPortfolio() {
       const [coin, chart] = await Promise.all([getCoinDetails(id), getMarketChart(id)]);
       const defi = await getDefiLlamaData(coin.symbol, coin.name);
       setState({ type: 'loaded', data: { coin, chart, defi } });
+
+      const cat = getCategoryInfo(coin.categories);
+      const risk = getRiskLevel(coin);
+      const entry: HistoryEntry = {
+        id: coin.id,
+        name: coin.name,
+        symbol: coin.symbol.toUpperCase(),
+        image: coin.image.thumb,
+        price: coin.market_data.current_price.usd,
+        pct24h: coin.market_data.price_change_percentage_24h ?? null,
+        marketCap: coin.market_data.market_cap.usd,
+        riskLabel: risk.label,
+        riskColor: risk.color,
+        categoryEmoji: cat.emoji,
+        categoryLabel: cat.label,
+        ts: Date.now(),
+      };
+      setHistory(prev => {
+        const updated = [entry, ...prev.filter(h => h.id !== coin.id)].slice(0, 12);
+        saveHistory(updated);
+        return updated;
+      });
     } catch (err) {
-      setState({ type: 'error', message: err instanceof Error ? err.message : 'Unbekannter Fehler' });
+      const msg = err instanceof Error ? err.message : 'Unbekannter Fehler';
+      setState({ type: 'error', message: msg.includes('429') ? 'API Rate-Limit erreicht — bitte 30 Sekunden warten und erneut versuchen.' : msg });
     }
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+    saveHistory([]);
   }, []);
 
   return (
     <div className="min-h-screen" style={{ background: '#0A0F1E' }}>
       <div className="max-w-5xl mx-auto px-4 py-10">
+        {/* Header */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center gap-2 text-xs text-slate-500 bg-white/5 border border-white/10 px-4 py-2 mb-4" style={{ borderRadius: 20 }}>
-            <span className="w-1.5 h-1.5 bg-emerald-400 animate-pulse" style={{ borderRadius: '50%' }} />
+            <Activity size={12} className="text-emerald-400" />
             Echtzeit-Daten via CoinGecko & DeFiLlama — kein API-Key erforderlich
           </div>
-          <h1 className="text-3xl md:text-4xl font-bold text-white mb-2 mt-0">Crypto Portfolio Analyse</h1>
+          <h1 className="text-3xl md:text-4xl font-bold text-white mb-2 mt-0">
+            {state.type === 'loaded'
+              ? <button onClick={goHome} className="hover:text-slate-300 transition-colors cursor-pointer bg-transparent border-none p-0 text-3xl md:text-4xl font-bold text-white">Crypto Portfolio Analyse</button>
+              : 'Crypto Portfolio Analyse'
+            }
+          </h1>
           <p className="text-slate-400 text-base m-0">Gib einen Token ein und erhalte sofort alle wichtigen KPIs — verständlich erklärt.</p>
         </div>
 
@@ -597,18 +853,21 @@ export default function CryptoPortfolio() {
 
         <div className="mt-8">
           {state.type === 'idle' && (
-            <div className="text-center py-16">
-              <div className="text-6xl mb-4">🔍</div>
-              <div className="text-slate-500 mb-6">Suche nach Bitcoin, Ethereum, Solana, Uniswap…</div>
-              <div className="flex flex-wrap justify-center gap-2">
-                {['bitcoin', 'ethereum', 'solana', 'uniswap', 'chainlink', 'aave'].map(id => (
-                  <button key={id} onClick={() => load(id)}
-                    className="px-4 py-2 bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 text-sm transition-colors capitalize cursor-pointer"
-                    style={{ borderRadius: 6, background: 'rgba(255,255,255,0.05)' }}>
-                    {id.charAt(0).toUpperCase() + id.slice(1)}
-                  </button>
-                ))}
+            <div>
+              <div className="text-center py-10">
+                <div className="text-5xl mb-4">🔍</div>
+                <div className="text-slate-500 mb-5">Suche nach Bitcoin, Ethereum, Solana, SUI…</div>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {QUICK_IDS.map(id => (
+                    <button key={id} onClick={() => load(id)}
+                      className="px-4 py-2 bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 text-sm transition-colors capitalize cursor-pointer"
+                      style={{ borderRadius: 6 }}>
+                      {id === 'sui' ? 'SUI' : id.charAt(0).toUpperCase() + id.slice(1)}
+                    </button>
+                  ))}
+                </div>
               </div>
+              <HistoryPanel history={history} onSelect={load} onClear={clearHistory} />
             </div>
           )}
           {state.type === 'loading' && (
@@ -621,14 +880,14 @@ export default function CryptoPortfolio() {
           {state.type === 'error' && (
             <div className="text-center py-16">
               <AlertTriangle className="mx-auto mb-3 text-red-400" size={40} />
-              <div className="text-red-400 font-semibold">{state.message}</div>
-              <button onClick={() => setState({ type: 'idle' })}
-                className="mt-4 text-slate-500 hover:text-white text-sm underline bg-transparent border-none cursor-pointer">
-                Zurück zur Suche
+              <div className="text-red-400 font-semibold mb-1">{state.message}</div>
+              <button onClick={goHome}
+                className="mt-4 text-slate-500 hover:text-white text-sm underline bg-transparent border-none cursor-pointer flex items-center gap-1.5 mx-auto">
+                <ArrowLeft size={14} /> Zurück zur Suche
               </button>
             </div>
           )}
-          {state.type === 'loaded' && <Dashboard data={state.data} />}
+          {state.type === 'loaded' && <Dashboard data={state.data} onBack={goHome} />}
         </div>
       </div>
     </div>

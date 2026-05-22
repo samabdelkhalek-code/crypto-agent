@@ -91,7 +91,9 @@ export async function getCoinDetails(id: string): Promise<CoinDetails> {
   const res = await fetch(
     `${COINGECKO_BASE}/coins/${id}?localization=false&tickers=false&market_data=true&community_data=true&developer_data=true&sparkline=false`
   );
-  if (!res.ok) throw new Error('Token nicht gefunden');
+  if (res.status === 429) throw new Error('API Rate-Limit erreicht — bitte 30 Sekunden warten und erneut versuchen.');
+  if (res.status === 404) throw new Error(`Token "${id}" nicht gefunden. Bitte über die Suche auswählen.`);
+  if (!res.ok) throw new Error(`Fehler beim Laden (${res.status}) — bitte erneut versuchen.`);
   return res.json();
 }
 

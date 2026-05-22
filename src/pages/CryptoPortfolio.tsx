@@ -186,38 +186,6 @@ function saveHistory(entries: HistoryEntry[]) {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
 }
 
-function HistoryCard({ entry, onSelect }: { entry: HistoryEntry; onSelect: (id: string) => void }) {
-  const pct = entry.pct24h;
-  return (
-    <button
-      onClick={() => onSelect(entry.id)}
-      className="text-left w-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 p-3 transition-all cursor-pointer"
-      style={{ borderRadius: 8 }}
-    >
-      <div className="flex items-center gap-2.5 mb-2">
-        {entry.image
-          ? <img src={entry.image} alt={entry.name} className="w-7 h-7 shrink-0" style={{ borderRadius: '50%' }} />
-          : <div className="w-7 h-7 shrink-0 bg-white/10 flex items-center justify-center text-xs" style={{ borderRadius: '50%' }}>{entry.symbol[0]}</div>
-        }
-        <div className="min-w-0">
-          <div className="text-white text-sm font-semibold truncate">{entry.name}</div>
-          <div className="text-slate-500 text-xs uppercase">{entry.symbol}</div>
-        </div>
-      </div>
-      <div className="flex items-center justify-between">
-        <span className="text-white text-sm font-mono">{fmt(entry.price)}</span>
-        {pct != null && (
-          <span className={`text-xs font-semibold ${pctColor(pct)}`}>{fmtPct(pct)}</span>
-        )}
-      </div>
-      <div className="flex items-center justify-between mt-1.5">
-        <span className="text-slate-500 text-xs">{entry.categoryEmoji} {entry.categoryLabel}</span>
-        <span className={`text-xs font-semibold ${entry.riskColor}`}>{entry.riskLabel}</span>
-      </div>
-    </button>
-  );
-}
-
 function HistoryPanel({ history, onSelect, onClear }: { history: HistoryEntry[]; onSelect: (id: string) => void; onClear: () => void }) {
   if (history.length === 0) return null;
   return (
@@ -230,8 +198,39 @@ function HistoryPanel({ history, onSelect, onClear }: { history: HistoryEntry[];
           Verlauf löschen
         </button>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-        {history.map(e => <HistoryCard key={e.id} entry={e} onSelect={onSelect} />)}
+
+      {/* Compact table — same style as Top-200, no height limit */}
+      <div className="overflow-hidden border border-white/10" style={{ borderRadius: 8 }}>
+        <div className="grid grid-cols-[1fr_90px_70px_80px_80px] gap-2 px-4 py-2 bg-white/5 text-xs text-slate-500 uppercase tracking-widest border-b border-white/10">
+          <span>Name</span>
+          <span className="text-right">Preis</span>
+          <span className="text-right">24h</span>
+          <span className="text-right hidden sm:block">Risiko</span>
+          <span className="text-right hidden sm:block">Typ</span>
+        </div>
+        {history.map(e => {
+          const pct = e.pct24h;
+          return (
+            <button
+              key={e.id}
+              onClick={() => onSelect(e.id)}
+              className="w-full grid grid-cols-[1fr_90px_70px_80px_80px] gap-2 px-4 py-2.5 hover:bg-white/6 transition-colors text-left border-b border-white/5 last:border-0 cursor-pointer"
+            >
+              <span className="flex items-center gap-2 min-w-0">
+                {e.image
+                  ? <img src={e.image} alt={e.name} className="w-5 h-5 shrink-0" style={{ borderRadius: '50%' }} />
+                  : <div className="w-5 h-5 shrink-0 bg-white/10 flex items-center justify-center text-xs" style={{ borderRadius: '50%' }}>{e.symbol[0]}</div>
+                }
+                <span className="text-white text-sm font-medium truncate">{e.name}</span>
+                <span className="text-slate-600 text-xs uppercase hidden md:inline">{e.symbol}</span>
+              </span>
+              <span className="text-right text-white text-sm self-center font-mono">{fmt(e.price)}</span>
+              <span className={`text-right text-sm self-center font-semibold ${pctColor(pct)}`}>{pct != null ? fmtPct(pct) : '—'}</span>
+              <span className={`text-right text-xs self-center font-semibold hidden sm:block ${e.riskColor}`}>{e.riskLabel}</span>
+              <span className="text-right text-slate-500 text-xs self-center hidden sm:block truncate">{e.categoryEmoji} {e.categoryLabel}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -553,10 +552,21 @@ function InvestorsSection({ coinId }: { coinId: string }) {
             </div>
             <div className="space-y-2">
               {meta.investors.map((inv, i) => (
-                <div key={i} className="flex items-start justify-between gap-3 bg-white/4 px-3 py-2.5 border border-white/8" style={{ borderRadius: 6 }}>
-                  <div className="min-w-0">
-                    <div className="text-white text-sm font-semibold truncate">{inv.name}</div>
-                    {inv.round && <div className="text-slate-500 text-xs">{inv.round}</div>}
+                <div key={i} className="flex items-center justify-between gap-3 bg-white/4 px-3 py-2.5 border border-white/8" style={{ borderRadius: 6 }}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    {inv.domain && (
+                      <img
+                        src={`https://logo.clearbit.com/${inv.domain}`}
+                        alt={inv.name}
+                        className="w-6 h-6 shrink-0 bg-white/10 object-contain"
+                        style={{ borderRadius: 4 }}
+                        onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    )}
+                    <div className="min-w-0">
+                      <div className="text-white text-sm font-semibold truncate">{inv.name}</div>
+                      {inv.round && <div className="text-slate-500 text-xs">{inv.round}</div>}
+                    </div>
                   </div>
                   {inv.amount && (
                     <span className="text-emerald-400 text-sm font-bold shrink-0">{inv.amount}</span>
@@ -575,9 +585,20 @@ function InvestorsSection({ coinId }: { coinId: string }) {
             </div>
             <div className="space-y-2">
               {meta.partnerships.map((p, i) => (
-                <div key={i} className="bg-white/4 px-3 py-2.5 border border-white/8" style={{ borderRadius: 6 }}>
-                  <div className="text-white text-sm font-semibold">{p.name}</div>
-                  <div className="text-slate-400 text-xs mt-0.5">{p.type}</div>
+                <div key={i} className="flex items-center gap-2.5 bg-white/4 px-3 py-2.5 border border-white/8" style={{ borderRadius: 6 }}>
+                  {p.domain && (
+                    <img
+                      src={`https://logo.clearbit.com/${p.domain}`}
+                      alt={p.name}
+                      className="w-6 h-6 shrink-0 bg-white/10 object-contain"
+                      style={{ borderRadius: 4 }}
+                      onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    />
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-white text-sm font-semibold">{p.name}</div>
+                    <div className="text-slate-400 text-xs mt-0.5">{p.type}</div>
+                  </div>
                 </div>
               ))}
             </div>

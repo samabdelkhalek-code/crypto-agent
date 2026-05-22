@@ -10,6 +10,7 @@ import {
   type CoinSearchResult, type CoinDetails, type MarketChart, type DefiLlamaProtocol,
   type TopCoin, type GlobalMarket, type FearGreed,
 } from '../services/cryptoApi';
+import { getProjectMeta } from '../data/projectMetadata';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -508,6 +509,107 @@ function ValueProp({ coin, cat, defi }: { coin: CoinDetails; cat: CategoryInfo; 
   );
 }
 
+// ─── Investors & Partnerships ─────────────────────────────────────────────────
+
+function InvestorsSection({ coinId }: { coinId: string }) {
+  const meta = getProjectMeta(coinId);
+  if (!meta) return null;
+
+  const hasContent = meta.investors.length > 0 || meta.partnerships.length > 0 ||
+    meta.physicalProducts.length > 0 || meta.note;
+
+  if (!hasContent) return null;
+
+  const statusColor = (s: string) =>
+    s === 'live' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' :
+    s === 'announced' ? 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30' :
+    'text-slate-400 bg-slate-500/10 border-slate-500/30';
+  const statusLabel = (s: string) =>
+    s === 'live' ? 'Live' : s === 'announced' ? 'Angekündigt' : 'Eingestellt';
+
+  return (
+    <div className="border border-white/10 p-6 bg-white/3" style={{ borderRadius: 10 }}>
+      <h3 className="text-sm font-bold text-slate-300 uppercase tracking-widest mb-5 m-0 flex items-center gap-2">
+        🤝 Investoren, Kooperationen & Produkte
+        {meta.totalFunding && (
+          <span className="text-xs font-normal text-slate-500 normal-case tracking-normal ml-2">
+            Gesamtfinanzierung: <span className="text-emerald-400 font-semibold">{meta.totalFunding}</span>
+          </span>
+        )}
+      </h3>
+
+      {meta.note && (
+        <div className="mb-5 text-xs text-slate-400 bg-blue-500/8 border border-blue-500/20 px-4 py-2.5" style={{ borderRadius: 6 }}>
+          ℹ️ {meta.note}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Investors */}
+        {meta.investors.length > 0 && (
+          <div>
+            <div className="text-xs font-bold text-violet-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+              💼 Investoren ({meta.investors.length})
+            </div>
+            <div className="space-y-2">
+              {meta.investors.map((inv, i) => (
+                <div key={i} className="flex items-start justify-between gap-3 bg-white/4 px-3 py-2.5 border border-white/8" style={{ borderRadius: 6 }}>
+                  <div className="min-w-0">
+                    <div className="text-white text-sm font-semibold truncate">{inv.name}</div>
+                    {inv.round && <div className="text-slate-500 text-xs">{inv.round}</div>}
+                  </div>
+                  {inv.amount && (
+                    <span className="text-emerald-400 text-sm font-bold shrink-0">{inv.amount}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Partnerships */}
+        {meta.partnerships.length > 0 && (
+          <div>
+            <div className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+              🔗 Kooperationen ({meta.partnerships.length})
+            </div>
+            <div className="space-y-2">
+              {meta.partnerships.map((p, i) => (
+                <div key={i} className="bg-white/4 px-3 py-2.5 border border-white/8" style={{ borderRadius: 6 }}>
+                  <div className="text-white text-sm font-semibold">{p.name}</div>
+                  <div className="text-slate-400 text-xs mt-0.5">{p.type}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Physical Products */}
+      {meta.physicalProducts.length > 0 && (
+        <div className="mt-6">
+          <div className="text-xs font-bold text-amber-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+            📦 Physische Produkte ({meta.physicalProducts.length})
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {meta.physicalProducts.map((prod, i) => (
+              <div key={i} className="bg-amber-500/5 border border-amber-500/20 p-4" style={{ borderRadius: 8 }}>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span className="text-white font-bold text-sm">{prod.name}</span>
+                  <span className={`text-xs px-2 py-0.5 border font-semibold shrink-0 ${statusColor(prod.status)}`} style={{ borderRadius: 4 }}>
+                    {statusLabel(prod.status)}{prod.year ? ` ${prod.year}` : ''}
+                  </span>
+                </div>
+                <p className="text-slate-400 text-xs leading-relaxed m-0">{prod.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Top Coins Grid ───────────────────────────────────────────────────────────
 
 function TopCoinsGrid({ onSelect }: { onSelect: (id: string) => void }) {
@@ -747,6 +849,9 @@ function Dashboard({ data, onBack, isWatched, onToggleWatch }: {
 
       {/* Value Proposition */}
       <ValueProp coin={coin} cat={cat} defi={defi} />
+
+      {/* Investors, Partnerships & Physical Products */}
+      <InvestorsSection coinId={coin.id} />
 
       {/* 5 KPI cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">

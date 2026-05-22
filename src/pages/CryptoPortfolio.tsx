@@ -218,9 +218,7 @@ function HistoryCard({ entry, onSelect }: { entry: HistoryEntry; onSelect: (id: 
 }
 
 function HistoryPanel({ history, onSelect, onClear }: { history: HistoryEntry[]; onSelect: (id: string) => void; onClear: () => void }) {
-  const [expanded, setExpanded] = useState(false);
   if (history.length === 0) return null;
-  const visible = expanded ? history : history.slice(0, 8);
   return (
     <div className="mt-6">
       <div className="flex items-center justify-between mb-3">
@@ -232,14 +230,8 @@ function HistoryPanel({ history, onSelect, onClear }: { history: HistoryEntry[];
         </button>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {visible.map(e => <HistoryCard key={e.id} entry={e} onSelect={onSelect} />)}
+        {history.map(e => <HistoryCard key={e.id} entry={e} onSelect={onSelect} />)}
       </div>
-      {history.length > 8 && (
-        <button onClick={() => setExpanded(x => !x)}
-          className="mt-3 text-xs text-slate-500 hover:text-slate-300 transition-colors cursor-pointer bg-transparent border-none">
-          {expanded ? '▲ Weniger anzeigen' : `▼ Alle ${history.length} anzeigen`}
-        </button>
-      )}
     </div>
   );
 }

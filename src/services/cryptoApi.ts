@@ -105,6 +105,43 @@ export async function getTopCoins(): Promise<TopCoin[]> {
   return topCoinsCache!;
 }
 
+export interface GlobalMarket {
+  total_market_cap_usd: number;
+  market_cap_change_24h: number;
+  btc_dominance: number;
+  eth_dominance: number;
+  active_cryptocurrencies: number;
+}
+
+export interface FearGreed {
+  value: number;
+  label: string; // "Extreme Fear" | "Fear" | "Neutral" | "Greed" | "Extreme Greed"
+}
+
+export async function getGlobalMarket(): Promise<GlobalMarket | null> {
+  try {
+    const res = await fetch(`${COINGECKO_BASE}/global`);
+    if (!res.ok) return null;
+    const { data } = await res.json();
+    return {
+      total_market_cap_usd: data.total_market_cap?.usd ?? 0,
+      market_cap_change_24h: data.market_cap_change_percentage_24h_usd ?? 0,
+      btc_dominance: data.market_cap_percentage?.btc ?? 0,
+      eth_dominance: data.market_cap_percentage?.eth ?? 0,
+      active_cryptocurrencies: data.active_cryptocurrencies ?? 0,
+    };
+  } catch { return null; }
+}
+
+export async function getFearGreed(): Promise<FearGreed | null> {
+  try {
+    const res = await fetch('https://api.alternative.me/fng/?limit=1');
+    if (!res.ok) return null;
+    const { data } = await res.json();
+    return { value: parseInt(data[0].value), label: data[0].value_classification };
+  } catch { return null; }
+}
+
 export async function searchCoins(query: string): Promise<CoinSearchResult[]> {
   const res = await fetch(`${COINGECKO_BASE}/search?query=${encodeURIComponent(query)}`);
   if (!res.ok) throw new Error('Suche fehlgeschlagen');

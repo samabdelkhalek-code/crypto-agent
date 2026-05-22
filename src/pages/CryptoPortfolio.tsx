@@ -2,11 +2,13 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Search, ExternalLink, MessageCircle, GitBranch, TrendingUp,
   Flame, Lock, Users, BarChart2, AlertTriangle, CheckCircle,
-  Globe, ChevronDown, ArrowLeft, Clock, Shield, Zap, Activity,
+  Globe, ChevronDown, ArrowLeft, Clock, Shield, Zap, Activity, Star,
 } from 'lucide-react';
 import {
   searchCoins, getCoinDetails, getMarketChart, getDefiLlamaData, getTopCoins,
-  type CoinSearchResult, type CoinDetails, type MarketChart, type DefiLlamaProtocol, type TopCoin,
+  getGlobalMarket, getFearGreed,
+  type CoinSearchResult, type CoinDetails, type MarketChart, type DefiLlamaProtocol,
+  type TopCoin, type GlobalMarket, type FearGreed,
 } from '../services/cryptoApi';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -216,20 +218,101 @@ function HistoryCard({ entry, onSelect }: { entry: HistoryEntry; onSelect: (id: 
 }
 
 function HistoryPanel({ history, onSelect, onClear }: { history: HistoryEntry[]; onSelect: (id: string) => void; onClear: () => void }) {
+  const [expanded, setExpanded] = useState(false);
   if (history.length === 0) return null;
+  const visible = expanded ? history : history.slice(0, 8);
   return (
-    <div className="mt-8">
+    <div className="mt-6">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 text-slate-400 text-xs uppercase tracking-widest">
-          <Clock size={13} /> Zuletzt analysiert
+          <Clock size={13} /> Zuletzt analysiert ({history.length})
         </div>
         <button onClick={onClear} className="text-slate-600 hover:text-slate-400 text-xs transition-colors cursor-pointer bg-transparent border-none">
           Verlauf löschen
         </button>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {history.map(e => <HistoryCard key={e.id} entry={e} onSelect={onSelect} />)}
+        {visible.map(e => <HistoryCard key={e.id} entry={e} onSelect={onSelect} />)}
       </div>
+      {history.length > 8 && (
+        <button onClick={() => setExpanded(x => !x)}
+          className="mt-3 text-xs text-slate-500 hover:text-slate-300 transition-colors cursor-pointer bg-transparent border-none">
+          {expanded ? '▲ Weniger anzeigen' : `▼ Alle ${history.length} anzeigen`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Watchlist ────────────────────────────────────────────────────────────────
+
+const WATCHLIST_KEY = 'crypto-watchlist';
+function loadWatchlist(): string[] { try { return JSON.parse(localStorage.getItem(WATCHLIST_KEY) || '[]'); } catch { return []; } }
+function saveWatchlist(ids: string[]) { try { localStorage.setItem(WATCHLIST_KEY, JSON.stringify(ids)); } catch { /* */ } }
+
+function WatchlistPanel({ ids, history, onSelect }: { ids: string[]; history: HistoryEntry[]; onSelect: (id: string) => void }) {
+  if (ids.length === 0) return null;
+  const entries = ids.map(id => history.find(h => h.id === id)).filter(Boolean) as HistoryEntry[];
+  if (entries.length === 0) return null;
+  return (
+    <div className="mt-6">
+      <div className="flex items-center gap-2 text-amber-400 text-xs uppercase tracking-widest mb-3">
+        <Star size={13} fill="#F59E0B" /> Watchlist ({entries.length})
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        {entries.map(e => <HistoryCard key={e.id} entry={e} onSelect={onSelect} />)}
+      </div>
+    </div>
+  );
+}
+
+// ─── Market Bar ───────────────────────────────────────────────────────────────
+
+function fgColor(v: number): string {
+  if (v >= 75) return 'text-emerald-400';
+  if (v >= 55) return 'text-green-400';
+  if (v >= 45) return 'text-yellow-400';
+  if (v >= 25) return 'text-orange-400';
+  return 'text-red-400';
+}
+function fgEmoji(v: number): string {
+  if (v >= 75) return '🤑';
+  if (v >= 55) return '😊';
+  if (v >= 45) return '😐';
+  if (v >= 25) return '😟';
+  return '😱';
+}
+
+function MarketBar({ market, fg }: { market: GlobalMarket | null; fg: FearGreed | null }) {
+  if (!market && !fg) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs mb-8 px-1">
+      {market && (
+        <>
+          <span className="text-slate-500">
+            🌍 Marktkapitalisierung:{' '}
+            <span className="text-white font-semibold">{fmt(market.total_market_cap_usd)}</span>
+            {' '}<span className={pctColor(market.market_cap_change_24h)}>{fmtPct(market.market_cap_change_24h)}</span>
+          </span>
+          <span className="text-slate-500">
+            ₿ BTC Dominanz: <span className="text-orange-300 font-semibold">{market.btc_dominance.toFixed(1)}%</span>
+          </span>
+          <span className="text-slate-500">
+            Ξ ETH: <span className="text-blue-300 font-semibold">{market.eth_dominance.toFixed(1)}%</span>
+          </span>
+          <span className="text-slate-500">
+            Aktive Coins: <span className="text-slate-300">{market.active_cryptocurrencies.toLocaleString()}</span>
+          </span>
+        </>
+      )}
+      {fg && (
+        <span className="flex items-center gap-1.5 ml-auto bg-white/5 border border-white/10 px-3 py-1" style={{ borderRadius: 20 }}>
+          <span>{fgEmoji(fg.value)}</span>
+          <span className="text-slate-400">Fear & Greed:</span>
+          <span className={`font-bold ${fgColor(fg.value)}`}>{fg.value}</span>
+          <span className={fgColor(fg.value)}>{fg.label}</span>
+        </span>
+      )}
     </div>
   );
 }
@@ -577,7 +660,10 @@ function SearchBar({ onSelect }: { onSelect: (id: string) => void }) {
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
-function Dashboard({ data, onBack }: { data: DashboardData; onBack: () => void }) {
+function Dashboard({ data, onBack, isWatched, onToggleWatch }: {
+  data: DashboardData; onBack: () => void;
+  isWatched: boolean; onToggleWatch: (id: string) => void;
+}) {
   const { coin, chart, defi } = data;
   const md = coin.market_data;
   const cat = getCategoryInfo(coin.categories);
@@ -634,6 +720,13 @@ function Dashboard({ data, onBack }: { data: DashboardData; onBack: () => void }
                 #{md.market_cap_rank} Global
               </span>
             )}
+            <button
+              onClick={() => onToggleWatch(coin.id)}
+              title={isWatched ? 'Von Watchlist entfernen' : 'Zur Watchlist hinzufügen'}
+              className="cursor-pointer bg-transparent border-none p-1 transition-colors hover:scale-110"
+            >
+              <Star size={20} fill={isWatched ? '#F59E0B' : 'none'} className={isWatched ? 'text-amber-400' : 'text-slate-600 hover:text-slate-400'} />
+            </button>
           </div>
         </div>
         <div className="mt-5 border-t border-white/10 pt-4 space-y-3">
@@ -868,12 +961,27 @@ function Dashboard({ data, onBack }: { data: DashboardData; onBack: () => void }
 
 type State = { type: 'idle' } | { type: 'loading' } | { type: 'loaded'; data: DashboardData } | { type: 'error'; message: string };
 
-
 export default function CryptoPortfolio() {
   const [state, setState] = useState<State>({ type: 'idle' });
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
+  const [watchlist, setWatchlist] = useState<string[]>(loadWatchlist);
+  const [market, setMarket] = useState<GlobalMarket | null>(null);
+  const [fg, setFg] = useState<FearGreed | null>(null);
+
+  useEffect(() => {
+    getGlobalMarket().then(setMarket);
+    getFearGreed().then(setFg);
+  }, []);
 
   const goHome = useCallback(() => setState({ type: 'idle' }), []);
+
+  const toggleWatchlist = useCallback((id: string) => {
+    setWatchlist(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [id, ...prev];
+      saveWatchlist(next);
+      return next;
+    });
+  }, []);
 
   const load = useCallback(async (id: string) => {
     setState({ type: 'loading' });
@@ -881,44 +989,35 @@ export default function CryptoPortfolio() {
       const [coin, chart] = await Promise.all([getCoinDetails(id), getMarketChart(id)]);
       const defi = await getDefiLlamaData(coin.symbol, coin.name);
       setState({ type: 'loaded', data: { coin, chart, defi } });
-
       const cat = getCategoryInfo(coin.categories);
       const risk = getRiskLevel(coin);
       const entry: HistoryEntry = {
-        id: coin.id,
-        name: coin.name,
-        symbol: coin.symbol.toUpperCase(),
-        image: coin.image.thumb,
-        price: coin.market_data.current_price.usd,
+        id: coin.id, name: coin.name, symbol: coin.symbol.toUpperCase(),
+        image: coin.image.thumb, price: coin.market_data.current_price.usd,
         pct24h: coin.market_data.price_change_percentage_24h ?? null,
         marketCap: coin.market_data.market_cap.usd,
-        riskLabel: risk.label,
-        riskColor: risk.color,
-        categoryEmoji: cat.emoji,
-        categoryLabel: cat.label,
-        ts: Date.now(),
+        riskLabel: risk.label, riskColor: risk.color,
+        categoryEmoji: cat.emoji, categoryLabel: cat.label, ts: Date.now(),
       };
       setHistory(prev => {
-        const updated = [entry, ...prev.filter(h => h.id !== coin.id)].slice(0, 12);
+        const updated = [entry, ...prev.filter(h => h.id !== coin.id)].slice(0, 100);
         saveHistory(updated);
         return updated;
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unbekannter Fehler';
-      setState({ type: 'error', message: msg.includes('429') ? 'API Rate-Limit erreicht — bitte 30 Sekunden warten und erneut versuchen.' : msg });
+      setState({ type: 'error', message: err instanceof Error ? err.message : 'Unbekannter Fehler' });
     }
   }, []);
 
-  const clearHistory = useCallback(() => {
-    setHistory([]);
-    saveHistory([]);
-  }, []);
+  const clearHistory = useCallback(() => { setHistory([]); saveHistory([]); }, []);
+  const loadedId = state.type === 'loaded' ? state.data.coin.id : '';
 
   return (
     <div className="min-h-screen" style={{ background: '#0A0F1E' }}>
-      <div className="max-w-5xl mx-auto px-4 py-10">
+      <div className="max-w-5xl mx-auto px-4 py-8">
+
         {/* Header */}
-        <div className="text-center mb-10">
+        <div className="text-center mb-6">
           <div className="inline-flex items-center gap-2 text-xs text-slate-500 bg-white/5 border border-white/10 px-4 py-2 mb-4" style={{ borderRadius: 20 }}>
             <Activity size={12} className="text-emerald-400" />
             Echtzeit-Daten via CoinGecko & DeFiLlama — kein API-Key erforderlich
@@ -932,11 +1031,15 @@ export default function CryptoPortfolio() {
           <p className="text-slate-400 text-base m-0">Gib einen Token ein und erhalte sofort alle wichtigen KPIs — verständlich erklärt.</p>
         </div>
 
+        {/* Global Market Bar */}
+        <MarketBar market={market} fg={fg} />
+
         <SearchBar onSelect={load} />
 
         <div className="mt-8">
           {state.type === 'idle' && (
             <div>
+              <WatchlistPanel ids={watchlist} history={history} onSelect={load} />
               <HistoryPanel history={history} onSelect={load} onClear={clearHistory} />
               <TopCoinsGrid onSelect={load} />
             </div>
@@ -952,13 +1055,14 @@ export default function CryptoPortfolio() {
             <div className="text-center py-16">
               <AlertTriangle className="mx-auto mb-3 text-red-400" size={40} />
               <div className="text-red-400 font-semibold mb-1">{state.message}</div>
-              <button onClick={goHome}
-                className="mt-4 text-slate-500 hover:text-white text-sm underline bg-transparent border-none cursor-pointer flex items-center gap-1.5 mx-auto">
+              <button onClick={goHome} className="mt-4 text-slate-500 hover:text-white text-sm underline bg-transparent border-none cursor-pointer flex items-center gap-1.5 mx-auto">
                 <ArrowLeft size={14} /> Zurück zur Suche
               </button>
             </div>
           )}
-          {state.type === 'loaded' && <Dashboard data={state.data} onBack={goHome} />}
+          {state.type === 'loaded' && (
+            <Dashboard data={state.data} onBack={goHome} isWatched={watchlist.includes(loadedId)} onToggleWatch={toggleWatchlist} />
+          )}
         </div>
       </div>
     </div>

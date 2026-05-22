@@ -220,19 +220,28 @@ function HistoryCard({ entry, onSelect }: { entry: HistoryEntry; onSelect: (id: 
 
 function HistoryPanel({ history, onSelect, onClear }: { history: HistoryEntry[]; onSelect: (id: string) => void; onClear: () => void }) {
   if (history.length === 0) return null;
+  const compact = history.length > 12;
   return (
     <div className="mt-6">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2 text-slate-400 text-xs uppercase tracking-widest">
-          <Clock size={13} /> Zuletzt analysiert ({history.length})
+          <Clock size={13} /> Zuletzt analysiert ({history.length} / 100)
         </div>
         <button onClick={onClear} className="text-slate-600 hover:text-slate-400 text-xs transition-colors cursor-pointer bg-transparent border-none">
           Verlauf löschen
         </button>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {history.map(e => <HistoryCard key={e.id} entry={e} onSelect={onSelect} />)}
+      <div
+        className="overflow-y-auto"
+        style={{ maxHeight: compact ? 420 : undefined }}
+      >
+        <div className={`grid gap-2 ${compact ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-5' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3'}`}>
+          {history.map(e => <HistoryCard key={e.id} entry={e} onSelect={onSelect} />)}
+        </div>
       </div>
+      {compact && (
+        <div className="text-xs text-slate-600 mt-2 text-center">↕ Scrollen für alle {history.length} Einträge</div>
+      )}
     </div>
   );
 }

@@ -510,6 +510,40 @@ function ValueProp({ coin, cat, defi }: { coin: CoinDetails; cat: CategoryInfo; 
 
 // ─── Investors & Partnerships ─────────────────────────────────────────────────
 
+function LogoTile({ name, domain, tooltip }: { name: string; domain: string; tooltip?: string }) {
+  const [failed, setFailed] = useState(false);
+  const short = name.split(' ')[0];
+  return (
+    <div className="group relative flex flex-col items-center gap-1.5" title={tooltip ?? name}>
+      <div
+        className="w-14 h-14 flex items-center justify-center bg-white p-1.5 border border-white/10 group-hover:border-white/40 transition-all group-hover:scale-105"
+        style={{ borderRadius: 12 }}
+      >
+        {!failed ? (
+          <img
+            src={`https://logo.clearbit.com/${domain}`}
+            alt={name}
+            className="w-full h-full object-contain"
+            style={{ borderRadius: 8 }}
+            onError={() => setFailed(true)}
+          />
+        ) : (
+          <span className="text-slate-800 text-lg font-bold">{short[0]}</span>
+        )}
+      </div>
+      <span className="text-slate-500 text-xs text-center leading-tight max-w-[56px] truncate">{short}</span>
+      {tooltip && (
+        <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 z-20 hidden group-hover:block
+          bg-slate-900 border border-white/20 text-slate-200 text-xs px-3 py-2 whitespace-nowrap max-w-[220px] whitespace-normal leading-snug"
+          style={{ borderRadius: 6, boxShadow: '0 4px 24px rgba(0,0,0,0.6)' }}>
+          <div className="font-semibold text-white mb-0.5">{name}</div>
+          {tooltip}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InvestorsSection({ coinId }: { coinId: string }) {
   const meta = getProjectMeta(coinId);
   if (!meta) return null;
@@ -526,9 +560,23 @@ function InvestorsSection({ coinId }: { coinId: string }) {
   const statusLabel = (s: string) =>
     s === 'live' ? 'Live' : s === 'announced' ? 'Angekündigt' : 'Eingestellt';
 
+  // Collect all entities that have a logo domain (investors + partnerships)
+  const logoItems: { name: string; domain: string; tooltip: string; tag: 'investor' | 'partner' }[] = [
+    ...meta.investors.filter(i => i.domain).map(i => ({
+      name: i.name, domain: i.domain!,
+      tooltip: [i.round, i.amount].filter(Boolean).join(' · ') || i.name,
+      tag: 'investor' as const,
+    })),
+    ...meta.partnerships.filter(p => p.domain).map(p => ({
+      name: p.name, domain: p.domain!,
+      tooltip: p.type,
+      tag: 'partner' as const,
+    })),
+  ];
+
   return (
     <div className="border border-white/10 p-6 bg-white/3" style={{ borderRadius: 10 }}>
-      <h3 className="text-sm font-bold text-slate-300 uppercase tracking-widest mb-5 m-0 flex items-center gap-2">
+      <h3 className="text-sm font-bold text-slate-300 uppercase tracking-widest mb-1 m-0 flex items-center gap-2">
         🤝 Investoren, Kooperationen & Produkte
         {meta.totalFunding && (
           <span className="text-xs font-normal text-slate-500 normal-case tracking-normal ml-2">
@@ -538,11 +586,40 @@ function InvestorsSection({ coinId }: { coinId: string }) {
       </h3>
 
       {meta.note && (
-        <div className="mb-5 text-xs text-slate-400 bg-blue-500/8 border border-blue-500/20 px-4 py-2.5" style={{ borderRadius: 6 }}>
+        <div className="mt-3 mb-2 text-xs text-slate-400 bg-blue-500/8 border border-blue-500/20 px-4 py-2.5" style={{ borderRadius: 6 }}>
           ℹ️ {meta.note}
         </div>
       )}
 
+      {/* ── LOGO WALL ── */}
+      {logoItems.length > 0 && (
+        <div className="mt-4 mb-6">
+          <div className="text-xs text-slate-500 uppercase tracking-widest mb-3">
+            {logoItems.length} bekannte Partner & Investoren — hover für Details
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {logoItems.map((item, i) => (
+              <div key={i} className="relative">
+                <LogoTile name={item.name} domain={item.domain} tooltip={item.tooltip} />
+                {/* small tag badge */}
+                <span
+                  className="absolute -top-1 -right-1 text-[9px] font-bold px-1 leading-tight"
+                  style={{
+                    borderRadius: 3,
+                    background: item.tag === 'investor' ? 'rgba(167,139,250,0.25)' : 'rgba(96,165,250,0.25)',
+                    color: item.tag === 'investor' ? '#c4b5fd' : '#93c5fd',
+                    border: `1px solid ${item.tag === 'investor' ? 'rgba(167,139,250,0.4)' : 'rgba(96,165,250,0.4)'}`,
+                  }}
+                >
+                  {item.tag === 'investor' ? 'INV' : 'CO-OP'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── DETAIL LISTS ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Investors */}
         {meta.investors.length > 0 && (
@@ -633,7 +710,7 @@ function InvestorsSection({ coinId }: { coinId: string }) {
 
 // ─── Top Coins Grid ───────────────────────────────────────────────────────────
 
-function TopCoinsGrid({ onSelect }: { onSelect: (id: string) => void }) {
+function TopCoinsGrid({ onSelect, onPreAdd }: { onSelect: (id: string) => void; onPreAdd: (coin: TopCoin) => void }) {
   const [coins, setCoins] = useState<TopCoin[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
@@ -694,7 +771,7 @@ function TopCoinsGrid({ onSelect }: { onSelect: (id: string) => void }) {
             return (
               <button
                 key={coin.id}
-                onClick={() => onSelect(coin.id)}
+                onClick={() => { onPreAdd(coin); onSelect(coin.id); }}
                 className="w-full grid grid-cols-[40px_1fr_90px_90px_90px] gap-2 px-4 py-2.5 hover:bg-white/6 transition-colors text-left border-b border-white/5 last:border-0 cursor-pointer"
               >
                 <span className="text-slate-600 text-xs self-center">{coin.market_cap_rank}</span>
@@ -1127,6 +1204,27 @@ export default function CryptoPortfolio() {
     }
   }, []);
 
+  const preAddToHistory = useCallback((coin: TopCoin) => {
+    setHistory(prev => {
+      // don't overwrite an entry that already has full data (has a real categoryLabel)
+      const existing = prev.find(h => h.id === coin.id);
+      if (existing && existing.categoryLabel !== '—') return prev;
+      const entry: HistoryEntry = existing
+        ? { ...existing, ts: Date.now() }
+        : {
+            id: coin.id, name: coin.name, symbol: coin.symbol.toUpperCase(),
+            image: coin.image, price: coin.current_price,
+            pct24h: coin.price_change_percentage_24h ?? null,
+            marketCap: coin.market_cap,
+            riskLabel: '—', riskColor: 'text-slate-400',
+            categoryEmoji: '💎', categoryLabel: '—', ts: Date.now(),
+          };
+      const updated = [entry, ...prev.filter(h => h.id !== coin.id)].slice(0, 100);
+      saveHistory(updated);
+      return updated;
+    });
+  }, []);
+
   const clearHistory = useCallback(() => { setHistory([]); saveHistory([]); }, []);
   const loadedId = state.type === 'loaded' ? state.data.coin.id : '';
 
@@ -1159,7 +1257,7 @@ export default function CryptoPortfolio() {
             <div>
               <WatchlistPanel ids={watchlist} history={history} onSelect={load} />
               <HistoryPanel history={history} onSelect={load} onClear={clearHistory} />
-              <TopCoinsGrid onSelect={load} />
+              <TopCoinsGrid onSelect={load} onPreAdd={preAddToHistory} />
             </div>
           )}
           {state.type === 'loading' && (

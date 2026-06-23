@@ -6,10 +6,14 @@ import {
 } from 'lucide-react';
 import {
   searchCoins, getCoinDetails, getMarketChart, getDefiLlamaData, getTopCoins,
-  getGlobalMarket, getFearGreed,
+  getGlobalMarket, getFearGreed, getMarketContext, getMarketsByIds,
   type CoinSearchResult, type CoinDetails, type MarketChart, type DefiLlamaProtocol,
-  type TopCoin, type GlobalMarket, type FearGreed,
+  type TopCoin, type GlobalMarket, type FearGreed, type MarketContext,
 } from '../services/cryptoApi';
+import {
+  computeIndicators, computeForecast, rankBeta, portfolioProjection, computeMarketRegime,
+  type Indicators, type Forecast, type Scenario,
+} from '../services/forecast';
 import { getProjectMeta } from '../data/projectMetadata';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -242,6 +246,29 @@ const WATCHLIST_KEY = 'crypto-watchlist';
 function loadWatchlist(): string[] { try { return JSON.parse(localStorage.getItem(WATCHLIST_KEY) || '[]'); } catch { return []; } }
 function saveWatchlist(ids: string[]) { try { localStorage.setItem(WATCHLIST_KEY, JSON.stringify(ids)); } catch { /* */ } }
 
+function HistoryCard({ entry, onSelect }: { entry: HistoryEntry; onSelect: (id: string) => void }) {
+  return (
+    <button
+      onClick={() => onSelect(entry.id)}
+      className="text-left bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/8 transition-all p-3 cursor-pointer"
+      style={{ borderRadius: 8 }}
+    >
+      <div className="flex items-center gap-2 mb-2 min-w-0">
+        {entry.image
+          ? <img src={entry.image} alt={entry.name} className="w-6 h-6 shrink-0" style={{ borderRadius: '50%' }} />
+          : <div className="w-6 h-6 shrink-0 bg-white/10 flex items-center justify-center text-xs" style={{ borderRadius: '50%' }}>{entry.symbol[0]}</div>}
+        <span className="text-white text-sm font-semibold truncate">{entry.name}</span>
+        <span className="text-slate-600 text-xs uppercase ml-auto shrink-0">{entry.symbol}</span>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className="text-white text-sm font-mono">{fmt(entry.price)}</span>
+        <span className={`text-xs font-semibold ${pctColor(entry.pct24h)}`}>{entry.pct24h != null ? fmtPct(entry.pct24h) : '—'}</span>
+      </div>
+      <div className="mt-1.5 text-xs text-slate-500 truncate">{entry.categoryEmoji} {entry.categoryLabel}</div>
+    </button>
+  );
+}
+
 function WatchlistPanel({ ids, history, onSelect }: { ids: string[]; history: HistoryEntry[]; onSelect: (id: string) => void }) {
   if (ids.length === 0) return null;
   const entries = ids.map(id => history.find(h => h.id === id)).filter(Boolean) as HistoryEntry[];
@@ -254,6 +281,285 @@ function WatchlistPanel({ ids, history, onSelect }: { ids: string[]; history: Hi
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         {entries.map(e => <HistoryCard key={e.id} entry={e} onSelect={onSelect} />)}
       </div>
+    </div>
+  );
+}
+
+// ─── Marktlage-Ampel ─────────────────────────────────────────────────────────
+
+function MarketRegimeBanner({ market, fg, ctx }: { market: GlobalMarket | null; fg: FearGreed | null; ctx: MarketContext | null }) {
+  const r = computeMarketRegime(fg, ctx);
+  const ring = r.emoji === '🟢' ? 'border-emerald-500/30' : r.emoji === '🟡' ? 'border-yellow-500/30' : r.emoji === '🟠' ? 'border-orange-500/30' : 'border-red-500/30';
+  return (
+    <div className={`border ${ring} bg-white/3 p-4`} style={{ borderRadius: 10 }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-lg">{r.emoji}</span>
+        <span className="text-slate-400 text-xs uppercase tracking-widest">Marktlage</span>
+        <span className="text-white font-bold">{r.label}</span>
+        {market && (
+          <span className="text-slate-500 text-xs ml-auto">
+            🌍 {fmt(market.total_market_cap_usd)} <span className={pctColor(market.market_cap_change_24h)}>{fmtPct(market.market_cap_change_24h)}</span>
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-1.5 mt-2.5">
+        {r.drivers.map((d, i) => {
+          const c = d.impact === 'pos' ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/8'
+            : d.impact === 'neg' ? 'text-red-300 border-red-500/30 bg-red-500/8'
+            : 'text-slate-300 border-white/10 bg-white/5';
+          return <span key={i} className={`text-[11px] px-2 py-0.5 border ${c}`} style={{ borderRadius: 6 }}>{d.label}</span>;
+        })}
+      </div>
+      <div className="text-[11px] text-slate-600 mt-2">Aggregiertes Forward-Signal aus Zyklus, Liquidität, Sentiment &amp; Tech-Markt — keine Finanzberatung.</div>
+    </div>
+  );
+}
+
+// ─── Portfolio Tracker ──────────────────────────────────────────────────────
+
+interface Holding { id: string; symbol: string; name: string; image: string; amount: number; buyPrice?: number; buyDate?: string; }
+const PORTFOLIO_KEY = 'crypto-portfolio';
+
+// §23 EStG Haltefrist: steuerfrei ab dem Tag NACH dem 1-Jahres-Jahrestag (kalendergenau,
+// konsistent mit crypto-tax). Gibt gehaltene Tage, Status & Tage bis steuerfrei zurück.
+function holdingPeriod(buyDate?: string): { heldDays: number; taxFree: boolean; daysToFree: number } | null {
+  if (!buyDate) return null;
+  const t = new Date(buyDate).getTime();
+  if (!isFinite(t)) return null;
+  const heldDays = Math.floor((Date.now() - t) / 86_400_000);
+  const anniv = new Date(buyDate); anniv.setFullYear(anniv.getFullYear() + 1);
+  const freeTs = anniv.getTime() + 86_400_000; // Tag nach dem Jahrestag
+  return { heldDays, taxFree: Date.now() >= freeTs, daysToFree: Math.max(0, Math.ceil((freeTs - Date.now()) / 86_400_000)) };
+}
+function loadPortfolio(): Holding[] { try { return JSON.parse(localStorage.getItem(PORTFOLIO_KEY) || '[]'); } catch { return []; } }
+function savePortfolio(h: Holding[]) { try { localStorage.setItem(PORTFOLIO_KEY, JSON.stringify(h)); } catch { /* */ } }
+
+function AddHolding({ onAdd }: { onAdd: (coin: { id: string; symbol: string; name: string; image: string }, amount: number, buyPrice?: number, buyDate?: string) => void }) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<CoinSearchResult[]>([]);
+  const [picked, setPicked] = useState<CoinSearchResult | null>(null);
+  const [amount, setAmount] = useState('');
+  const [buyPrice, setBuyPrice] = useState('');
+  const [buyDate, setBuyDate] = useState('');
+  const [open, setOpen] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const onQuery = (v: string) => {
+    setQuery(v); setPicked(null);
+    clearTimeout(timer.current);
+    if (!v.trim()) { setResults([]); setOpen(false); return; }
+    timer.current = setTimeout(async () => { setResults(await searchCoins(v)); setOpen(true); }, 350);
+  };
+
+  const submit = () => {
+    const amt = parseFloat(amount.replace(',', '.'));
+    if (!picked || !isFinite(amt) || amt <= 0) return;
+    const bp = parseFloat(buyPrice.replace(',', '.'));
+    onAdd(
+      { id: picked.id, symbol: picked.symbol.toUpperCase(), name: picked.name, image: picked.thumb }, amt,
+      isFinite(bp) && bp > 0 ? bp : undefined,
+      buyDate || undefined,
+    );
+    setQuery(''); setPicked(null); setAmount(''); setBuyPrice(''); setBuyDate(''); setResults([]); setOpen(false);
+  };
+
+  const inputCls = 'w-full bg-white/5 border border-white/10 text-white text-sm px-3 py-2 placeholder-slate-600 outline-none';
+  return (
+    <div className="mb-4 space-y-2">
+      <div className="flex flex-col sm:flex-row gap-2">
+        <div className="relative flex-1">
+          <input value={query} onChange={e => onQuery(e.target.value)}
+            placeholder="Coin suchen (z.B. Bitcoin)…" className={inputCls} style={{ borderRadius: 6 }} />
+          {open && results.length > 0 && !picked && (
+            <div className="absolute top-full left-0 right-0 mt-1 z-40 overflow-y-auto" style={{ maxHeight: 240, borderRadius: 8, background: '#1a2035', border: '1px solid rgba(255,255,255,0.15)' }}>
+              {results.map(r => (
+                <button key={r.id} onClick={() => { setPicked(r); setQuery(r.name); setOpen(false); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/8 text-left cursor-pointer">
+                  {r.thumb && <img src={r.thumb} alt={r.name} className="w-5 h-5" style={{ borderRadius: '50%' }} />}
+                  <span className="text-white text-sm">{r.name}</span>
+                  <span className="text-slate-500 text-xs uppercase">{r.symbol}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <input value={amount} onChange={e => setAmount(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+          placeholder="Menge" inputMode="decimal" className={`${inputCls} sm:w-28`} style={{ borderRadius: 6 }} />
+      </div>
+      <div className="flex flex-col sm:flex-row gap-2">
+        <input value={buyPrice} onChange={e => setBuyPrice(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+          placeholder="Einstand $/Stück (optional)" inputMode="decimal" className={`${inputCls} flex-1`} style={{ borderRadius: 6 }} />
+        <input value={buyDate} onChange={e => setBuyDate(e.target.value)} type="date" title="Kaufdatum (optional, für §23-Haltefrist)"
+          className={`${inputCls} flex-1`} style={{ borderRadius: 6, colorScheme: 'dark' }} />
+        <button onClick={submit} disabled={!picked || !amount}
+          className="px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
+          style={{ borderRadius: 6, background: 'rgba(16,185,129,0.18)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.4)' }}>
+          + Hinzufügen
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PortfolioPanel({ onSelect }: { onSelect: (id: string) => void }) {
+  const [holdings, setHoldings] = useState<Holding[]>(loadPortfolio);
+  const [prices, setPrices] = useState<Record<string, TopCoin>>({});
+  const [showForecast, setShowForecast] = useState(false);
+
+  useEffect(() => {
+    if (!holdings.length) return;
+    getMarketsByIds(holdings.map(h => h.id))
+      .then(list => Object.fromEntries(list.map(c => [c.id, c])) as Record<string, TopCoin>)
+      .then(setPrices)
+      .catch(() => {});
+  }, [holdings]);
+
+  const update = (next: Holding[]) => { setHoldings(next); savePortfolio(next); };
+  const removeHolding = (id: string) => update(holdings.filter(h => h.id !== id));
+  const setAmount = (id: string, amount: number) => update(holdings.map(h => h.id === id ? { ...h, amount } : h));
+  const addHolding = (coin: { id: string; symbol: string; name: string; image: string }, amount: number, buyPrice?: number, buyDate?: string) => {
+    const ex = holdings.find(h => h.id === coin.id);
+    if (ex) update(holdings.map(h => h.id === coin.id
+      ? { ...h, amount: h.amount + amount, buyPrice: buyPrice ?? h.buyPrice, buyDate: buyDate ?? h.buyDate }
+      : h));
+    else update([...holdings, { ...coin, amount, buyPrice, buyDate }]);
+  };
+
+  const rows = holdings.map(h => {
+    const p = prices[h.id];
+    const price = p?.current_price ?? 0;
+    const value = price * h.amount;
+    const cost = h.buyPrice != null ? h.buyPrice * h.amount : null;
+    const pl = cost != null ? value - cost : null;
+    const plPct = cost && cost > 0 ? (value / cost - 1) * 100 : null;
+    return { h, price, value, cost, pl, plPct, hp: holdingPeriod(h.buyDate), pct24: p?.price_change_percentage_24h ?? null, rank: p?.market_cap_rank ?? null, image: p?.image || h.image };
+  }).sort((a, b) => b.value - a.value);
+
+  const total = rows.reduce((s, r) => s + r.value, 0);
+  const total24Ago = rows.reduce((s, r) => s + (r.pct24 != null ? r.value / (1 + r.pct24 / 100) : r.value), 0);
+  const totalPct = total24Ago > 0 ? (total / total24Ago - 1) * 100 : null;
+  const change24Abs = total - total24Ago;
+
+  // Unrealisiertes G/V (nur über Bestände mit Einstandspreis)
+  const totalCost = rows.reduce((s, r) => s + (r.cost ?? 0), 0);
+  const valueWithCost = rows.reduce((s, r) => s + (r.cost != null ? r.value : 0), 0);
+  const totalPL = totalCost > 0 ? valueWithCost - totalCost : null;
+  const totalPLPct = totalCost > 0 ? (valueWithCost / totalCost - 1) * 100 : null;
+
+  const beta = total > 0 ? rows.reduce((s, r) => s + rankBeta(r.rank) * r.value, 0) / total : 1.2;
+  const proj = portfolioProjection(beta);
+
+  return (
+    <div className="mt-6 border border-emerald-500/20 p-5 bg-gradient-to-br from-emerald-600/6 to-teal-600/4" style={{ borderRadius: 10 }}>
+      <div className="flex items-center justify-between mb-1 gap-3">
+        <div className="text-slate-300 text-xs uppercase tracking-widest flex items-center gap-2">💼 Mein Portfolio</div>
+        {total > 0 && (
+          <div className="text-right">
+            <div className="text-2xl font-bold text-white leading-none">{fmt(total)}</div>
+            {totalPct != null && (
+              <div className={`text-xs font-semibold ${pctColor(totalPct)}`}>
+                {fmtPct(totalPct)} ({change24Abs >= 0 ? '+' : '−'}{fmt(Math.abs(change24Abs))}) · 24h
+              </div>
+            )}
+            {totalPL != null && (
+              <div className={`text-xs font-semibold ${pctColor(totalPL)}`}>
+                G/V: {totalPL >= 0 ? '+' : '−'}{fmt(Math.abs(totalPL))} ({fmtPct(totalPLPct)}) · unrealisiert
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-slate-500 mb-4">Eigene Bestände eingeben — Werte, Allokation &amp; Prognose. Lokal gespeichert, nichts verlässt deinen Browser.</p>
+
+      <AddHolding onAdd={addHolding} />
+
+      {rows.length === 0 ? (
+        <div className="text-center py-6 text-slate-600 text-sm">Noch keine Bestände — oben einen Coin + Menge hinzufügen.</div>
+      ) : (
+        <>
+          <div className="space-y-2">
+            {rows.map(r => {
+              const alloc = total > 0 ? (r.value / total) * 100 : 0;
+              return (
+                <div key={r.h.id} className="flex items-center gap-3 bg-white/4 border border-white/8 px-3 py-2.5" style={{ borderRadius: 8 }}>
+                  <button onClick={() => onSelect(r.h.id)} className="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer bg-transparent border-none p-0">
+                    {r.image
+                      ? <img src={r.image} alt={r.h.name} className="w-7 h-7 shrink-0" style={{ borderRadius: '50%' }} />
+                      : <div className="w-7 h-7 shrink-0 bg-white/10" style={{ borderRadius: '50%' }} />}
+                    <div className="min-w-0">
+                      <div className="text-white text-sm font-semibold truncate">{r.h.name} <span className="text-slate-600 text-xs uppercase">{r.h.symbol}</span></div>
+                      <div className="text-slate-500 text-xs">{r.h.amount} × {fmt(r.price)} <span className={pctColor(r.pct24)}>{r.pct24 != null ? fmtPct(r.pct24) : ''}</span></div>
+                      {(r.pl != null || r.hp) && (
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                          {r.pl != null && (
+                            <span className={`text-xs font-semibold ${pctColor(r.pl)}`}>
+                              G/V {r.pl >= 0 ? '+' : '−'}{fmt(Math.abs(r.pl))}{r.plPct != null ? ` (${fmtPct(r.plPct)})` : ''}
+                            </span>
+                          )}
+                          {r.hp && (
+                            <span className={`text-[10px] px-1.5 py-0.5 border ${r.hp.taxFree ? 'text-emerald-300 border-emerald-500/30 bg-emerald-500/8' : 'text-yellow-300 border-yellow-500/30 bg-yellow-500/8'}`} style={{ borderRadius: 4 }}>
+                              §23 {r.hp.taxFree ? 'steuerfrei (>1J)' : `noch ${r.hp.daysToFree}T`}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                  <div className="text-right shrink-0">
+                    <div className="text-white text-sm font-semibold font-mono">{fmt(r.value)}</div>
+                    <div className="flex items-center gap-1.5 justify-end mt-0.5">
+                      <div className="w-12 h-1 bg-white/10" style={{ borderRadius: 2 }}><div className="h-full bg-emerald-400" style={{ width: `${alloc}%`, borderRadius: 2 }} /></div>
+                      <span className="text-slate-500 text-xs w-8 text-right">{alloc.toFixed(0)}%</span>
+                    </div>
+                  </div>
+                  <input defaultValue={r.h.amount} key={`${r.h.id}-${r.h.amount}`}
+                    onBlur={e => { const v = parseFloat(e.target.value.replace(',', '.')); if (isFinite(v) && v > 0) setAmount(r.h.id, v); }}
+                    title="Menge bearbeiten" inputMode="decimal"
+                    className="w-20 bg-white/5 border border-white/10 text-white text-xs px-2 py-1 outline-none hidden md:block" style={{ borderRadius: 4 }} />
+                  <button onClick={() => removeHolding(r.h.id)} title="Entfernen" className="text-slate-600 hover:text-red-400 text-base cursor-pointer bg-transparent border-none px-1 shrink-0">✕</button>
+                </div>
+              );
+            })}
+          </div>
+
+          <button onClick={() => setShowForecast(!showForecast)} className="mt-3 text-xs text-emerald-400 hover:text-emerald-300 cursor-pointer bg-transparent border-none p-0">
+            {showForecast ? '▾' : '▸'} 🔮 Portfolio-Prognose (Szenarien)
+          </button>
+          {showForecast && total > 0 && (
+            <>
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {proj.map(p => (
+                  <div key={p.key} className="bg-white/4 border border-white/8 p-3" style={{ borderRadius: 8 }}>
+                    <div className="text-center text-white text-xs font-bold mb-2">{p.label}</div>
+                    <div className="space-y-1.5">
+                      {(['bear', 'base', 'bull'] as Scenario[]).map(sc => {
+                        const v = total * p.mult[sc];
+                        const col = sc === 'bear' ? 'text-red-300' : sc === 'bull' ? 'text-emerald-300' : 'text-blue-200';
+                        const emo = sc === 'bear' ? '🐻' : sc === 'bull' ? '🐂' : '⚖️';
+                        const ret = (p.mult[sc] - 1) * 100;
+                        return (
+                          <div key={sc} className="flex items-center justify-between text-xs gap-2">
+                            <span className={col}>{emo}</span>
+                            <span className="text-white font-mono flex-1 text-right">{fmt(v)}</span>
+                            <span className={`${pctColor(ret)} w-12 text-right`}>{ret > 0 ? '+' : ''}{ret >= 1000 ? `${(ret / 100).toFixed(1)}x` : `${ret.toFixed(0)}%`}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 text-[11px] text-slate-600">Szenarien aus rang-basiertem Portfolio-Beta (Ø {beta.toFixed(2)}) &amp; Markt-Annahmen — keine Finanzberatung.</div>
+            </>
+          )}
+
+          <a href="https://tax.alpen-huettentouren.de" target="_blank" rel="noopener noreferrer"
+            className="mt-3 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold transition-colors"
+            style={{ borderRadius: 8, background: 'rgba(16,185,129,0.12)', color: '#6EE7B7', border: '1px solid rgba(16,185,129,0.3)' }}>
+            🧾 Diese Bestände versteuern — mit crypto-tax (§23 EStG, FIFO) →
+          </a>
+        </>
+      )}
     </div>
   );
 }
@@ -708,6 +1014,174 @@ function InvestorsSection({ coinId }: { coinId: string }) {
   );
 }
 
+// ─── Top Movers (24h Gewinner / Verlierer) ──────────────────────────────────
+
+function MiniSparkline({ data, width = 60, height = 18 }: { data?: number[]; width?: number; height?: number }) {
+  if (!data || data.length < 2) return <div style={{ width, height }} className="shrink-0" />;
+  const min = Math.min(...data); const max = Math.max(...data); const range = max - min || 1;
+  const pts = data.map((v, i) => `${(i / (data.length - 1)) * width},${height - ((v - min) / range) * height}`).join(' ');
+  const up = data[data.length - 1] >= data[0];
+  return (
+    <svg width={width} height={height} className="shrink-0" preserveAspectRatio="none">
+      <polyline points={pts} fill="none" stroke={up ? '#10B981' : '#EF4444'} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function TopMovers({ onSelect }: { onSelect: (id: string) => void }) {
+  const [coins, setCoins] = useState<TopCoin[]>([]);
+  useEffect(() => { getTopCoins().then(setCoins).catch(() => {}); }, []);
+
+  const withPct = coins.filter(c => isFinite(c.price_change_percentage_24h));
+  if (withPct.length < 10) return null;
+  const sorted = [...withPct].sort((a, b) => b.price_change_percentage_24h - a.price_change_percentage_24h);
+  const cols = [
+    { title: 'Gewinner', emoji: '📈', list: sorted.slice(0, 5) },
+    { title: 'Verlierer', emoji: '📉', list: sorted.slice(-5).reverse() },
+  ];
+
+  return (
+    <div className="mt-6 border border-white/10 p-5 bg-white/3" style={{ borderRadius: 10 }}>
+      <div className="text-slate-300 text-xs uppercase tracking-widest mb-4 flex items-center gap-2">🔥 Top-Bewegungen · 24h</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+        {cols.map(col => (
+          <div key={col.title}>
+            <div className="text-xs font-bold uppercase tracking-widest mb-2 text-slate-400">{col.emoji} {col.title}</div>
+            <div className="space-y-1">
+              {col.list.map(c => (
+                <button key={c.id} onClick={() => onSelect(c.id)}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-white/6 transition-colors text-left cursor-pointer bg-transparent border-none" style={{ borderRadius: 6 }}>
+                  <img src={c.image} alt={c.name} className="w-5 h-5 shrink-0" style={{ borderRadius: '50%' }} />
+                  <span className="text-white text-sm truncate flex-1 min-w-0">{c.name}</span>
+                  <span className="hidden sm:block"><MiniSparkline data={c.sparkline_in_7d?.price} /></span>
+                  <span className="text-slate-400 text-xs font-mono hidden md:block">{fmt(c.current_price)}</span>
+                  <span className={`text-xs font-semibold w-16 text-right ${pctColor(c.price_change_percentage_24h)}`}>{fmtPct(c.price_change_percentage_24h)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Coin-Vergleich ──────────────────────────────────────────────────────────
+
+function CoinPicker({ onPick, placeholder }: { onPick: (c: CoinSearchResult) => void; placeholder: string }) {
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<CoinSearchResult[]>([]);
+  const [open, setOpen] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const onQuery = (v: string) => {
+    setQ(v);
+    clearTimeout(timer.current);
+    if (!v.trim()) { setResults([]); setOpen(false); return; }
+    timer.current = setTimeout(async () => { setResults(await searchCoins(v)); setOpen(true); }, 350);
+  };
+  return (
+    <div className="relative flex-1">
+      <input value={q} onChange={e => onQuery(e.target.value)} placeholder={placeholder}
+        className="w-full bg-white/5 border border-white/10 text-white text-sm px-3 py-2 placeholder-slate-600 outline-none" style={{ borderRadius: 6 }} />
+      {open && results.length > 0 && (
+        <div className="absolute top-full left-0 right-0 mt-1 z-40 overflow-y-auto" style={{ maxHeight: 240, borderRadius: 8, background: '#1a2035', border: '1px solid rgba(255,255,255,0.15)' }}>
+          {results.map(r => (
+            <button key={r.id} onClick={() => { onPick(r); setQ(r.name); setOpen(false); }}
+              className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/8 text-left cursor-pointer">
+              {r.thumb && <img src={r.thumb} alt={r.name} className="w-5 h-5" style={{ borderRadius: '50%' }} />}
+              <span className="text-white text-sm">{r.name}</span>
+              <span className="text-slate-500 text-xs uppercase">{r.symbol}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompareTool({ onSelect }: { onSelect: (id: string) => void }) {
+  const [a, setA] = useState<CoinSearchResult | null>(null);
+  const [b, setB] = useState<CoinSearchResult | null>(null);
+  const [data, setData] = useState<Record<string, TopCoin>>({});
+
+  useEffect(() => {
+    const ids = [a?.id, b?.id].filter(Boolean) as string[];
+    if (ids.length < 2) return;
+    getMarketsByIds(ids)
+      .then(list => Object.fromEntries(list.map(c => [c.id, c])) as Record<string, TopCoin>)
+      .then(setData).catch(() => {});
+  }, [a, b]);
+
+  const ca = a ? data[a.id] : undefined;
+  const cb = b ? data[b.id] : undefined;
+
+  const base12 = (c: TopCoin) => {
+    const beta = rankBeta(c.market_cap_rank);
+    const mid = portfolioProjection(beta).find(h => h.key === 'mid')!;
+    return { base: (mid.mult.base - 1) * 100, bull: (mid.mult.bull - 1) * 100, bear: (mid.mult.bear - 1) * 100 };
+  };
+
+  type Row = { label: string; a: string; b: string; aWin?: boolean; bWin?: boolean; aCol?: string; bCol?: string };
+  const rows: Row[] = [];
+  if (ca && cb) {
+    const liq = (c: TopCoin) => c.market_cap > 0 ? c.total_volume / c.market_cap : 0;
+    rows.push({ label: 'Preis', a: fmt(ca.current_price), b: fmt(cb.current_price) });
+    rows.push({ label: '24h', a: fmtPct(ca.price_change_percentage_24h), b: fmtPct(cb.price_change_percentage_24h),
+      aCol: pctColor(ca.price_change_percentage_24h), bCol: pctColor(cb.price_change_percentage_24h),
+      aWin: ca.price_change_percentage_24h > cb.price_change_percentage_24h, bWin: cb.price_change_percentage_24h > ca.price_change_percentage_24h });
+    rows.push({ label: 'Marktkap.', a: fmt(ca.market_cap), b: fmt(cb.market_cap), aWin: ca.market_cap > cb.market_cap, bWin: cb.market_cap > ca.market_cap });
+    rows.push({ label: 'Rang', a: `#${ca.market_cap_rank}`, b: `#${cb.market_cap_rank}`, aWin: ca.market_cap_rank < cb.market_cap_rank, bWin: cb.market_cap_rank < ca.market_cap_rank });
+    rows.push({ label: 'Liquidität (Vol/MCap)', a: `${(liq(ca) * 100).toFixed(1)}%`, b: `${(liq(cb) * 100).toFixed(1)}%`, aWin: liq(ca) > liq(cb), bWin: liq(cb) > liq(ca) });
+    const fa = base12(ca), fb = base12(cb);
+    rows.push({ label: 'Prognose 12M (Basis)', a: `${fa.base >= 0 ? '+' : ''}${fa.base.toFixed(0)}%`, b: `${fb.base >= 0 ? '+' : ''}${fb.base.toFixed(0)}%`,
+      aCol: pctColor(fa.base), bCol: pctColor(fb.base), aWin: fa.base > fb.base, bWin: fb.base > fa.base });
+    rows.push({ label: 'Prognose 12M (Bulle)', a: `+${fa.bull.toFixed(0)}%`, b: `+${fb.bull.toFixed(0)}%`, aCol: 'text-emerald-300', bCol: 'text-emerald-300' });
+  }
+
+  const head = (c: TopCoin | undefined, pick: CoinSearchResult | null) => (
+    <div className="flex items-center justify-center gap-2 min-h-[28px]">
+      {c && <img src={c.image} alt="" className="w-6 h-6" style={{ borderRadius: '50%' }} />}
+      <span className="text-white font-bold text-sm">{pick?.name ?? '—'}</span>
+      {c && <span className="text-slate-500 text-xs uppercase">{c.symbol}</span>}
+    </div>
+  );
+
+  return (
+    <div className="mt-6 border border-white/10 p-5 bg-white/3" style={{ borderRadius: 10 }}>
+      <div className="text-slate-300 text-xs uppercase tracking-widest mb-4 flex items-center gap-2">⚖️ Coins vergleichen</div>
+      <div className="flex flex-col sm:flex-row gap-2 mb-4">
+        <CoinPicker onPick={setA} placeholder="Erster Coin…" />
+        <span className="self-center text-slate-600 text-xs hidden sm:block">vs</span>
+        <CoinPicker onPick={setB} placeholder="Zweiter Coin…" />
+      </div>
+
+      {ca && cb ? (
+        <div className="overflow-hidden border border-white/10" style={{ borderRadius: 8 }}>
+          <div className="grid grid-cols-[1fr_1fr_1fr] gap-2 px-4 py-3 bg-white/5 border-b border-white/10 items-center">
+            <span className="text-xs text-slate-500 uppercase tracking-widest">Metrik</span>
+            {head(ca, a)}
+            {head(cb, b)}
+          </div>
+          {rows.map((r, i) => (
+            <div key={i} className="grid grid-cols-[1fr_1fr_1fr] gap-2 px-4 py-2.5 border-b border-white/5 last:border-0 items-center">
+              <span className="text-slate-400 text-xs">{r.label}</span>
+              <span className={`text-center text-sm font-semibold ${r.aCol ?? 'text-white'}`}>{r.a}{r.aWin && <span className="text-emerald-400 ml-1">✓</span>}</span>
+              <span className={`text-center text-sm font-semibold ${r.bCol ?? 'text-white'}`}>{r.b}{r.bWin && <span className="text-emerald-400 ml-1">✓</span>}</span>
+            </div>
+          ))}
+          <div className="grid grid-cols-[1fr_1fr_1fr] gap-2 px-4 py-3 bg-white/4">
+            <span></span>
+            <button onClick={() => onSelect(ca.id)} className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer bg-transparent border-none">Voll-Analyse →</button>
+            <button onClick={() => onSelect(cb.id)} className="text-xs text-blue-400 hover:text-blue-300 cursor-pointer bg-transparent border-none">Voll-Analyse →</button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-center py-4 text-slate-600 text-sm">Zwei Coins wählen, um Kennzahlen &amp; Prognose direkt zu vergleichen.</div>
+      )}
+    </div>
+  );
+}
+
 // ─── Top Coins Grid ───────────────────────────────────────────────────────────
 
 function TopCoinsGrid({ onSelect, onPreAdd }: { onSelect: (id: string) => void; onPreAdd: (coin: TopCoin) => void }) {
@@ -800,7 +1274,7 @@ function SearchBar({ onSelect }: { onSelect: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value; setQuery(v);
@@ -850,11 +1324,250 @@ function SearchBar({ onSelect }: { onSelect: (id: string) => void }) {
   );
 }
 
+// ─── Advanced Indicators ────────────────────────────────────────────────────
+
+function IndicatorTile({ label, value, hint, color = 'text-white', tip }: {
+  label: string; value: string; hint?: string; color?: string; tip?: string;
+}) {
+  return (
+    <div className="group relative bg-white/5 border border-white/10 p-3.5" style={{ borderRadius: 8 }} title={tip}>
+      <div className="text-[11px] text-slate-500 uppercase tracking-widest mb-1 leading-tight">{label}</div>
+      <div className={`text-lg font-bold ${color}`}>{value}</div>
+      {hint && <div className="text-[11px] text-slate-500 mt-0.5 leading-tight">{hint}</div>}
+    </div>
+  );
+}
+
+function IndicatorPanel({ ind, ctx }: { ind: Indicators; ctx: MarketContext | null }) {
+  const mm = ind.mayerMultiple;
+  const mmColor = mm == null ? 'text-slate-400' : mm > 2.4 ? 'text-red-400' : mm < 0.8 ? 'text-emerald-400' : 'text-slate-200';
+  const rsi = ind.rsi14;
+  const rsiColor = rsi == null ? 'text-slate-400' : rsi > 70 ? 'text-red-400' : rsi < 30 ? 'text-emerald-400' : 'text-slate-200';
+  const volPct = ind.volatility != null ? ind.volatility * 100 : null;
+  const volColor = volPct == null ? 'text-slate-400' : volPct > 120 ? 'text-red-400' : volPct > 70 ? 'text-yellow-400' : 'text-emerald-400';
+  const sharpeColor = ind.sharpe == null ? 'text-slate-400' : ind.sharpe > 1 ? 'text-emerald-400' : ind.sharpe > 0 ? 'text-yellow-400' : 'text-red-400';
+  const liqColor = ind.liquidityRegime.direction === 'expansion' ? 'text-emerald-400' : ind.liquidityRegime.direction === 'contraction' ? 'text-red-400' : 'text-yellow-400';
+
+  return (
+    <div className="border border-white/10 p-6 bg-white/3" style={{ borderRadius: 10 }}>
+      <h3 className="text-sm font-bold text-slate-300 uppercase tracking-widest mb-1 m-0 flex items-center gap-2">
+        <Activity size={15} className="text-cyan-400" /> Erweiterte Indikatoren
+      </h3>
+      <p className="text-xs text-slate-500 mt-1 mb-4">Technische, Zyklus- & Liquiditäts-Signale — die Bausteine der Prognose unten.</p>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        <IndicatorTile
+          label="Mayer Multiple" value={mm != null ? mm.toFixed(2) : '—'} color={mmColor}
+          hint={mm == null ? 'zu wenig Historie' : mm > 2.4 ? 'überhitzt (>2.4)' : mm < 0.8 ? 'günstige Zone (<0.8)' : 'neutral'}
+          tip="Preis ÷ 200-Tage-Durchschnitt. >2.4 = historisch überhitzt, <0.8 = historisch günstig." />
+        <IndicatorTile
+          label="RSI (14T)" value={rsi != null ? rsi.toFixed(0) : '—'} color={rsiColor}
+          hint={rsi == null ? '—' : rsi > 70 ? 'überkauft' : rsi < 30 ? 'überverkauft' : 'neutral'}
+          tip="Relative-Stärke-Index. >70 überkauft, <30 überverkauft." />
+        <IndicatorTile
+          label="Volatilität (annual.)" value={volPct != null ? `${volPct.toFixed(0)}%` : '—'} color={volColor}
+          hint={volPct == null ? '—' : volPct > 120 ? 'sehr hoch' : volPct > 70 ? 'hoch' : 'moderat'}
+          tip="Annualisierte Schwankungsbreite aus täglichen Renditen." />
+        <IndicatorTile
+          label="Sharpe (1J)" value={ind.sharpe != null ? ind.sharpe.toFixed(2) : '—'} color={sharpeColor}
+          hint={ind.sharpe == null ? '—' : 'Rendite je Risiko'}
+          tip="Risiko-adjustierte Rendite: (1J-Return − 4%) ÷ Volatilität. >1 ist gut." />
+        <IndicatorTile
+          label="Abstand zum ATH" value={`${ind.drawdownFromAth.toFixed(0)}%`}
+          color={ind.drawdownFromAth < -70 ? 'text-amber-400' : ind.drawdownFromAth < -30 ? 'text-yellow-400' : 'text-emerald-400'}
+          hint={ind.drawdownFromAth < -70 ? 'tief im Drawdown' : 'nahe Hoch'}
+          tip="Wie weit unter dem Allzeithoch der Kurs aktuell liegt." />
+        <IndicatorTile
+          label="Max Drawdown (1J)" value={ind.maxDrawdown != null ? `${ind.maxDrawdown.toFixed(0)}%` : '—'}
+          color="text-red-300" hint="größter Einbruch"
+          tip="Größter Peak-to-Trough-Verlust der letzten 12 Monate." />
+        <IndicatorTile
+          label="Liquidität (Vol/MCap)" value={ind.volToMcap != null ? `${(ind.volToMcap * 100).toFixed(1)}%` : '—'}
+          color={ind.volToMcap != null && ind.volToMcap > 0.1 ? 'text-emerald-400' : 'text-slate-200'}
+          hint="Handelbarkeit" tip="24h-Volumen ÷ Marktkapitalisierung. Höher = liquider." />
+        <IndicatorTile
+          label="Verwässerung offen" value={`${ind.remainingDilution.toFixed(0)}%`}
+          color={ind.remainingDilution > 60 ? 'text-red-400' : ind.remainingDilution > 25 ? 'text-yellow-400' : 'text-emerald-400'}
+          hint={ind.remainingDilution > 60 ? 'hoher Druck' : ind.remainingDilution > 25 ? 'moderat' : 'gering'}
+          tip="Anteil der maximalen Token-Menge, der noch nicht im Umlauf ist." />
+      </div>
+
+      {/* Cycle clock + liquidity */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+        <div className="bg-white/5 border border-white/10 p-4" style={{ borderRadius: 8 }}>
+          <div className="text-[11px] text-slate-500 uppercase tracking-widest mb-1">⛏️ Halving-Zyklus</div>
+          <div className="text-white font-bold text-base">{ind.cyclePhase.label}</div>
+          <div className="text-xs text-slate-400 mt-1">{ind.cyclePhase.desc}</div>
+          <div className="flex gap-4 mt-2 text-xs">
+            <span className="text-slate-500">Seit Halving: <span className="text-slate-300 font-semibold">{ind.daysSinceHalving} T</span></span>
+            <span className="text-slate-500">Nächstes: <span className="text-slate-300 font-semibold">in {ind.daysToNextHalving} T</span></span>
+          </div>
+        </div>
+        <div className="bg-white/5 border border-white/10 p-4" style={{ borderRadius: 8 }}>
+          <div className="text-[11px] text-slate-500 uppercase tracking-widest mb-1">🌊 Globale Liquidität</div>
+          <div className={`font-bold text-base ${liqColor}`}>{ind.liquidityRegime.label}</div>
+          <div className="text-xs text-slate-400 mt-1">{ind.liquidityRegime.desc}</div>
+          <div className="text-[11px] text-slate-600 mt-2">Howell-Framework · ~65-Monats-Zyklus</div>
+        </div>
+        {ctx?.stablecoinChange30d != null && (
+          <div className="bg-white/5 border border-white/10 p-4" style={{ borderRadius: 8 }}>
+            <div className="text-[11px] text-slate-500 uppercase tracking-widest mb-1">💵 Stablecoin-Liquidität</div>
+            <div className={`font-bold text-base ${ctx.stablecoinChange30d > 1 ? 'text-emerald-400' : ctx.stablecoinChange30d < -1 ? 'text-red-400' : 'text-slate-200'}`}>
+              {ctx.stablecoinChange30d >= 0 ? '+' : ''}{ctx.stablecoinChange30d.toFixed(1)}% <span className="text-xs text-slate-500">(30T)</span>
+            </div>
+            <div className="text-xs text-slate-400 mt-1">
+              {ctx.stablecoinTotalUsd ? `Aggregiert ≈ ${fmt(ctx.stablecoinTotalUsd)}` : 'Marktweites „dry powder"'}
+            </div>
+            <div className="text-[11px] text-slate-600 mt-2">{ctx.stablecoinChange30d > 0 ? 'Frisches Kaufkapital strömt zu' : 'Liquidität verlässt den Markt'}</div>
+          </div>
+        )}
+        {ctx?.btcPiCycleRatio != null && (
+          <div className="bg-white/5 border border-white/10 p-4" style={{ borderRadius: 8 }}>
+            <div className="text-[11px] text-slate-500 uppercase tracking-widest mb-1">🥧 BTC Pi-Cycle</div>
+            <div className={`font-bold text-base ${ctx.btcPiCycleRatio >= 0.85 ? 'text-red-400' : ctx.btcPiCycleRatio < 0.5 ? 'text-emerald-400' : 'text-slate-200'}`}>
+              {ctx.btcPiCycleRatio.toFixed(2)}
+            </div>
+            <div className="text-xs text-slate-400 mt-1">
+              {ctx.btcPiCycleRatio >= 1 ? 'Zyklus-Top-Zone' : ctx.btcPiCycleRatio >= 0.85 ? 'Nähe Top-Zone' : ctx.btcPiCycleRatio < 0.5 ? 'Frühe Zyklusphase' : 'Mittlere Phase'}
+            </div>
+            <div className="text-[11px] text-slate-600 mt-2">111T-MA ÷ (2 × 350T-MA) · ≥1 = Top</div>
+          </div>
+        )}
+        {ctx?.m2Yoy != null && (
+          <div className="bg-white/5 border border-white/10 p-4" style={{ borderRadius: 8 }}>
+            <div className="text-[11px] text-slate-500 uppercase tracking-widest mb-1">💴 Geldmenge M2 (YoY)</div>
+            <div className={`font-bold text-base ${ctx.m2Yoy > 4 ? 'text-emerald-400' : ctx.m2Yoy < 1 ? 'text-red-400' : 'text-slate-200'}`}>
+              {ctx.m2Yoy >= 0 ? '+' : ''}{ctx.m2Yoy.toFixed(1)}%
+            </div>
+            <div className="text-xs text-slate-400 mt-1">{ctx.m2Yoy > 4 ? 'Expansion — Rückenwind' : ctx.m2Yoy < 1 ? 'Stagnation — Gegenwind' : 'Moderat'}</div>
+            <div className="text-[11px] text-slate-600 mt-2">FRED · echte Notenbankdaten</div>
+          </div>
+        )}
+        {ctx?.dxyChange3m != null && (
+          <div className="bg-white/5 border border-white/10 p-4" style={{ borderRadius: 8 }}>
+            <div className="text-[11px] text-slate-500 uppercase tracking-widest mb-1">💵 Dollar-Index (DXY, 3M)</div>
+            <div className={`font-bold text-base ${ctx.dxyChange3m < -1 ? 'text-emerald-400' : ctx.dxyChange3m > 1 ? 'text-red-400' : 'text-slate-200'}`}>
+              {ctx.dxyChange3m >= 0 ? '+' : ''}{ctx.dxyChange3m.toFixed(1)}%
+            </div>
+            <div className="text-xs text-slate-400 mt-1">{ctx.dxyChange3m < -1 ? 'Schwächerer Dollar — bullisch' : ctx.dxyChange3m > 1 ? 'Stärkerer Dollar — bärisch' : 'Seitwärts'}</div>
+            <div className="text-[11px] text-slate-600 mt-2">FRED · invers zu Risiko-Assets</div>
+          </div>
+        )}
+        {ctx?.netLiqChange3m != null && (
+          <div className="bg-white/5 border border-white/10 p-4" style={{ borderRadius: 8 }}>
+            <div className="text-[11px] text-slate-500 uppercase tracking-widest mb-1">🏦 Net Liquidity (Fed)</div>
+            <div className={`font-bold text-base ${ctx.netLiqChange3m > 1 ? 'text-emerald-400' : ctx.netLiqChange3m < -1 ? 'text-red-400' : 'text-slate-200'}`}>
+              {ctx.netLiqChange3m >= 0 ? '+' : ''}{ctx.netLiqChange3m.toFixed(1)}% <span className="text-xs text-slate-500">(3M)</span>
+            </div>
+            <div className="text-xs text-slate-400 mt-1">{ctx.netLiquidityUsd ? `≈ ${fmt(ctx.netLiquidityUsd)}` : 'WALCL − RRP − TGA'}</div>
+            <div className="text-[11px] text-slate-600 mt-2">{ctx.netLiqChange3m > 1 ? 'Liquidität expandiert — Rückenwind' : ctx.netLiqChange3m < -1 ? 'Liquidität schrumpft — Gegenwind' : 'Stabil'}</div>
+          </div>
+        )}
+        {ctx?.nasdaqChange3m != null && (
+          <div className="bg-white/5 border border-white/10 p-4" style={{ borderRadius: 8 }}>
+            <div className="text-[11px] text-slate-500 uppercase tracking-widest mb-1">📉 Tech-/Risiko-Markt (Nasdaq, 3M)</div>
+            <div className={`font-bold text-base ${ctx.nasdaqChange3m > 1 ? 'text-emerald-400' : ctx.nasdaqChange3m < -1 ? 'text-red-400' : 'text-slate-200'}`}>
+              {ctx.nasdaqChange3m >= 0 ? '+' : ''}{ctx.nasdaqChange3m.toFixed(1)}%
+            </div>
+            <div className="text-xs text-slate-400 mt-1">{ctx.nasdaqChange3m > 1 ? 'Risk-on — Rückenwind' : ctx.nasdaqChange3m < -1 ? 'Risk-off — Gegenwind' : 'Seitwärts'}</div>
+            <div className="text-[11px] text-slate-600 mt-2">Krypto ist hoch-korreliert · KI-/Tech-Blasenrisiko (Burry)</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Price Forecast ───────────────────────────────────────────────────────────
+
+const SCENARIO_META: Record<Scenario, { label: string; emoji: string; color: string; bg: string; border: string }> = {
+  bear: { label: 'Bär', emoji: '🐻', color: 'text-red-300', bg: 'bg-red-500/8', border: 'border-red-500/25' },
+  base: { label: 'Basis', emoji: '⚖️', color: 'text-blue-200', bg: 'bg-blue-500/8', border: 'border-blue-500/25' },
+  bull: { label: 'Bulle', emoji: '🐂', color: 'text-emerald-300', bg: 'bg-emerald-500/8', border: 'border-emerald-500/25' },
+};
+
+function ForecastPanel({ forecast, symbol }: { forecast: Forecast; symbol: string }) {
+  const scenarios: Scenario[] = ['bear', 'base', 'bull'];
+  return (
+    <div className="border border-violet-500/20 p-6 bg-gradient-to-br from-violet-600/8 to-indigo-600/5" style={{ borderRadius: 10 }}>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+        <h3 className="text-sm font-bold text-slate-200 uppercase tracking-widest m-0 flex items-center gap-2">
+          🔮 Preis-Prognose — Szenarien
+        </h3>
+        <span className="text-xs px-2.5 py-1 border border-white/15 bg-white/5 text-slate-300" style={{ borderRadius: 20 }}>
+          Konfidenz: <span className={forecast.confidence === 'Mittel' ? 'text-yellow-300 font-semibold' : 'text-orange-300 font-semibold'}>{forecast.confidence}</span>
+        </span>
+      </div>
+      <p className="text-xs text-slate-400 mt-1 mb-5">
+        Drei Szenarien je Zeithorizont — abgeleitet aus Marktzyklus, globaler Liquidität, Fundamentaldaten & Bewertung.
+        <span className="text-slate-500"> Keine Garantie, keine Finanzberatung.</span>
+      </p>
+
+      {/* Horizon cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {forecast.horizons.map((h) => (
+          <div key={h.key} className="bg-white/4 border border-white/10 p-4" style={{ borderRadius: 10 }}>
+            <div className="text-center mb-3">
+              <div className="text-white font-bold text-base">{h.label}</div>
+              <div className="text-[11px] text-slate-500 uppercase tracking-widest">Zielkurs · {symbol}</div>
+            </div>
+            <div className="space-y-2">
+              {scenarios.map((sc) => {
+                const m = SCENARIO_META[sc];
+                const ret = h.returns[sc];
+                return (
+                  <div key={sc} className={`flex items-center justify-between gap-2 px-3 py-2 border ${m.bg} ${m.border}`} style={{ borderRadius: 8 }}>
+                    <span className={`text-xs font-bold ${m.color} flex items-center gap-1.5 w-16 shrink-0`}>
+                      <span>{m.emoji}</span>{m.label}
+                    </span>
+                    <span className="text-white font-bold font-mono text-sm flex-1 text-right">{fmt(h.prices[sc])}</span>
+                    <span className={`text-xs font-semibold w-20 text-right ${pctColor(ret)}`}>
+                      {ret > 0 ? '+' : ''}{ret >= 1000 ? `${(ret / 100).toFixed(1)}x` : `${ret.toFixed(0)}%`}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-2 text-center text-[11px] text-slate-600">
+              Basis-CAGR ≈ <span className="text-slate-400">{h.cagr.base.toFixed(0)}%/Jahr</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Drivers */}
+      <div className="mt-5">
+        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Was die Prognose treibt</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {forecast.drivers.map((d, i) => {
+            const dot = d.impact === 'pos' ? 'bg-emerald-400' : d.impact === 'neg' ? 'bg-red-400' : 'bg-slate-500';
+            return (
+              <div key={i} className="flex items-start gap-2.5 bg-white/4 border border-white/8 px-3 py-2.5" style={{ borderRadius: 8 }}>
+                <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${dot}`} style={{ borderRadius: '50%' }} />
+                <div className="min-w-0">
+                  <div className="text-slate-200 text-sm font-semibold">{d.label}</div>
+                  <div className="text-slate-500 text-xs mt-0.5 leading-snug">{d.detail}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Disclaimer */}
+      <div className="mt-4 text-[11px] text-slate-500 bg-white/3 border border-white/8 px-4 py-3 leading-relaxed" style={{ borderRadius: 8 }}>
+        {forecast.notes.map((n, i) => <div key={i}>• {n}</div>)}
+      </div>
+    </div>
+  );
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
-function Dashboard({ data, onBack, isWatched, onToggleWatch }: {
+function Dashboard({ data, onBack, isWatched, onToggleWatch, market, fg, ctx }: {
   data: DashboardData; onBack: () => void;
   isWatched: boolean; onToggleWatch: (id: string) => void;
+  market: GlobalMarket | null; fg: FearGreed | null; ctx: MarketContext | null;
 }) {
   const { coin, chart, defi } = data;
   const md = coin.market_data;
@@ -876,6 +1589,10 @@ function Dashboard({ data, onBack, isWatched, onToggleWatch }: {
   const fees30 = tvl ? defi?.fees30d : undefined;
   const pfRatio = tvl && rev30 ? (md.market_cap.usd / (rev30 * 12)).toFixed(1) : null;
   const stars = risk.label === 'Niedrig' ? 5 : risk.label === 'Mittel' ? 3 : Math.max(1, Math.round(risk.score / 100 * 5));
+
+  // Erweiterte Indikatoren & szenario-basierte Preisprognose
+  const indicators = computeIndicators(coin, chart);
+  const forecast = computeForecast(coin, indicators, defi, market, fg, ctx);
 
   return (
     <div className="space-y-5">
@@ -947,6 +1664,12 @@ function Dashboard({ data, onBack, isWatched, onToggleWatch }: {
 
       {/* Value Proposition */}
       <ValueProp coin={coin} cat={cat} defi={defi} />
+
+      {/* 🔮 Price Forecast — Szenarien (headline feature) */}
+      <ForecastPanel forecast={forecast} symbol={coin.symbol.toUpperCase()} />
+
+      {/* 📡 Advanced Indicators */}
+      <IndicatorPanel ind={indicators} ctx={ctx} />
 
       {/* Investors, Partnerships & Physical Products */}
       <InvestorsSection coinId={coin.id} />
@@ -1162,13 +1885,20 @@ export default function CryptoPortfolio() {
   const [watchlist, setWatchlist] = useState<string[]>(loadWatchlist);
   const [market, setMarket] = useState<GlobalMarket | null>(null);
   const [fg, setFg] = useState<FearGreed | null>(null);
+  const [ctx, setCtx] = useState<MarketContext | null>(null);
+  const currentIdRef = useRef<string>('');
 
   useEffect(() => {
     getGlobalMarket().then(setMarket);
     getFearGreed().then(setFg);
+    getMarketContext().then(setCtx);
   }, []);
 
-  const goHome = useCallback(() => setState({ type: 'idle' }), []);
+  const goHome = useCallback(() => {
+    currentIdRef.current = '';
+    setState({ type: 'idle' });
+    if (window.location.hash) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, []);
 
   const toggleWatchlist = useCallback((id: string) => {
     setWatchlist(prev => {
@@ -1179,6 +1909,10 @@ export default function CryptoPortfolio() {
   }, []);
 
   const load = useCallback(async (id: string) => {
+    currentIdRef.current = id;
+    if (decodeURIComponent(window.location.hash.replace(/^#/, '')) !== id) {
+      window.location.hash = encodeURIComponent(id);
+    }
     setState({ type: 'loading' });
     try {
       const [coin, chart] = await Promise.all([getCoinDetails(id), getMarketChart(id)]);
@@ -1226,6 +1960,18 @@ export default function CryptoPortfolio() {
   }, []);
 
   const clearHistory = useCallback(() => { setHistory([]); saveHistory([]); }, []);
+
+  // Deep-Linking: #coinId in der URL → teilbare/bookmarkbare Analyse + Browser-Zurück.
+  useEffect(() => {
+    const onHash = () => {
+      const id = decodeURIComponent(window.location.hash.replace(/^#/, '')).trim();
+      if (id && id !== currentIdRef.current) load(id);
+      else if (!id && currentIdRef.current) goHome();
+    };
+    onHash();
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [load, goHome]);
   const loadedId = state.type === 'loaded' ? state.data.coin.id : '';
 
   return (
@@ -1255,7 +2001,11 @@ export default function CryptoPortfolio() {
         <div className="mt-8">
           {state.type === 'idle' && (
             <div>
+              <MarketRegimeBanner market={market} fg={fg} ctx={ctx} />
+              <PortfolioPanel onSelect={load} />
               <WatchlistPanel ids={watchlist} history={history} onSelect={load} />
+              <TopMovers onSelect={load} />
+              <CompareTool onSelect={load} />
               <HistoryPanel history={history} onSelect={load} onClear={clearHistory} />
               <TopCoinsGrid onSelect={load} onPreAdd={preAddToHistory} />
             </div>
@@ -1277,9 +2027,25 @@ export default function CryptoPortfolio() {
             </div>
           )}
           {state.type === 'loaded' && (
-            <Dashboard data={state.data} onBack={goHome} isWatched={watchlist.includes(loadedId)} onToggleWatch={toggleWatchlist} />
+            <Dashboard data={state.data} onBack={goHome} isWatched={watchlist.includes(loadedId)} onToggleWatch={toggleWatchlist} market={market} fg={fg} ctx={ctx} />
           )}
         </div>
+
+        {/* Footer: Steuer-Brücke, Datenquellen & Disclaimer */}
+        <footer className="mt-12 pt-6 border-t border-white/10 text-xs text-slate-500">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span>🔮 <span className="text-slate-400">CryptoAgent</span></span>
+              <a href="https://tax.alpen-huettentouren.de" target="_blank" rel="noopener noreferrer" className="text-emerald-400 hover:text-emerald-300">🧾 Krypto-Steuer berechnen →</a>
+            </div>
+            <span className="text-slate-600">Daten: CoinGecko · DeFiLlama · FRED · alternative.me</span>
+          </div>
+          <p className="mt-3 text-slate-600 leading-relaxed m-0">
+            ⚠️ Keine Anlage- oder Steuerberatung. Alle Kennzahlen, Indikatoren und Prognosen dienen ausschließlich
+            der Information. Krypto-Assets sind hochvolatil — Totalverlust ist möglich. Prognosen sind szenario-basiert
+            und keine Garantie.
+          </p>
+        </footer>
       </div>
     </div>
   );

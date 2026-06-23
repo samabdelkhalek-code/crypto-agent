@@ -1,7 +1,37 @@
-const COINGECKO_BASE = 'https://api.coingecko.com/api/v3';
+// CoinGecko optional über den Cloudflare-Proxy (Edge-Caching + Demo-Key) leiten,
+// sonst direkt. Aktiviert durch VITE_CG_PROXY in der .env.
+const CG_PROXY = (import.meta.env.VITE_CG_PROXY ?? '').replace(/\/$/, '');
+const COINGECKO_BASE = CG_PROXY ? `${CG_PROXY}/api/v3` : 'https://api.coingecko.com/api/v3';
 const DEFILLAMA_BASE = 'https://api.llama.fi';
 
 let defiLlamaCache: DefiLlamaProtocol[] | null = null;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Robuster Fetch: Timeout + automatischer Retry bei Netzwerkfehlern ("Failed to
+// fetch"), 429 (Rate-Limit) und 5xx. Verhindert, dass transiente Aussetzer als
+// harte Fehler durchschlagen.
+async function robustFetch(url: string, tries = 3, timeoutMs = 12000): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < tries; i++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: ac.signal });
+      clearTimeout(timer);
+      if ((res.status === 429 || res.status >= 500) && i < tries - 1) {
+        await sleep(800 * (i + 1) + Math.random() * 400);
+        continue;
+      }
+      return res;
+    } catch (e) {
+      clearTimeout(timer);
+      lastErr = e;
+      if (i < tries - 1) { await sleep(800 * (i + 1) + Math.random() * 400); continue; }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('Netzwerkfehler');
+}
 
 export interface CoinSearchResult {
   id: string;
@@ -90,19 +120,31 @@ export interface TopCoin {
   market_cap_rank: number;
   price_change_percentage_24h: number;
   total_volume: number;
+  sparkline_in_7d?: { price: number[] };
 }
 
 let topCoinsCache: TopCoin[] | null = null;
 
 export async function getTopCoins(): Promise<TopCoin[]> {
   if (topCoinsCache) return topCoinsCache;
-  const base = `${COINGECKO_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&sparkline=false&price_change_percentage=24h`;
-  const [p1, p2] = await Promise.all([
-    fetch(`${base}&page=1`).then(r => r.ok ? r.json() : []),
-    fetch(`${base}&page=2`).then(r => r.ok ? r.json() : []),
-  ]);
-  topCoinsCache = [...p1, ...p2];
-  return topCoinsCache!;
+  const base = `${COINGECKO_BASE}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&sparkline=true&price_change_percentage=24h`;
+  const grab = (page: number) =>
+    robustFetch(`${base}&page=${page}`).then(r => r.ok ? r.json() : []).catch(() => []);
+  const [p1, p2] = await Promise.all([grab(1), grab(2)]);
+  const merged = [...p1, ...p2];
+  if (merged.length) topCoinsCache = merged; // leeres Ergebnis nicht cachen → nächster Versuch lädt neu
+  return merged;
+}
+
+// Aktuelle Marktdaten für bestimmte Coin-IDs (für den Portfolio-Tracker) — ein Call.
+export async function getMarketsByIds(ids: string[]): Promise<TopCoin[]> {
+  if (!ids.length) return [];
+  const url = `${COINGECKO_BASE}/coins/markets?vs_currency=usd&ids=${ids.join(',')}&order=market_cap_desc&per_page=250&sparkline=false&price_change_percentage=24h`;
+  try {
+    const res = await robustFetch(url);
+    if (!res.ok) return [];
+    return res.json();
+  } catch { return []; }
 }
 
 export interface GlobalMarket {
@@ -120,7 +162,7 @@ export interface FearGreed {
 
 export async function getGlobalMarket(): Promise<GlobalMarket | null> {
   try {
-    const res = await fetch(`${COINGECKO_BASE}/global`);
+    const res = await robustFetch(`${COINGECKO_BASE}/global`);
     if (!res.ok) return null;
     const { data } = await res.json();
     return {
@@ -135,7 +177,7 @@ export async function getGlobalMarket(): Promise<GlobalMarket | null> {
 
 export async function getFearGreed(): Promise<FearGreed | null> {
   try {
-    const res = await fetch('https://api.alternative.me/fng/?limit=1');
+    const res = await robustFetch('https://api.alternative.me/fng/?limit=1');
     if (!res.ok) return null;
     const { data } = await res.json();
     return { value: parseInt(data[0].value), label: data[0].value_classification };
@@ -143,28 +185,39 @@ export async function getFearGreed(): Promise<FearGreed | null> {
 }
 
 export async function searchCoins(query: string): Promise<CoinSearchResult[]> {
-  const res = await fetch(`${COINGECKO_BASE}/search?query=${encodeURIComponent(query)}`);
-  if (!res.ok) throw new Error('Suche fehlgeschlagen');
+  let res: Response;
+  try {
+    res = await robustFetch(`${COINGECKO_BASE}/search?query=${encodeURIComponent(query)}`);
+  } catch { return []; } // Suche soll bei Netzwerk-Aussetzern nicht hart fehlschlagen
+  if (!res.ok) return [];
   const data = await res.json();
   return (data.coins || []).slice(0, 8);
 }
 
 export async function getCoinDetails(id: string): Promise<CoinDetails> {
-  const res = await fetch(
-    `${COINGECKO_BASE}/coins/${id}?localization=false&tickers=false&market_data=true&community_data=true&developer_data=true&sparkline=false`
-  );
-  if (res.status === 429) throw new Error('API Rate-Limit erreicht — bitte 30 Sekunden warten und erneut versuchen.');
+  let res: Response;
+  try {
+    res = await robustFetch(
+      `${COINGECKO_BASE}/coins/${id}?localization=false&tickers=false&market_data=true&community_data=true&developer_data=true&sparkline=false`
+    );
+  } catch {
+    throw new Error('Netzwerkfehler — CoinGecko ist gerade nicht erreichbar. Bitte in ein paar Sekunden erneut versuchen.');
+  }
+  if (res.status === 429) throw new Error('CoinGecko Rate-Limit erreicht — bitte ~30 Sekunden warten und erneut versuchen.');
   if (res.status === 404) throw new Error(`Token "${id}" nicht gefunden. Bitte über die Suche auswählen.`);
   if (!res.ok) throw new Error(`Fehler beim Laden (${res.status}) — bitte erneut versuchen.`);
   return res.json();
 }
 
 export async function getMarketChart(id: string): Promise<MarketChart> {
-  const res = await fetch(
-    `${COINGECKO_BASE}/coins/${id}/market_chart?vs_currency=usd&days=365&interval=daily`
-  );
-  if (!res.ok) return { prices: [], market_caps: [], total_volumes: [] };
-  return res.json();
+  const empty: MarketChart = { prices: [], market_caps: [], total_volumes: [] };
+  try {
+    const res = await robustFetch(
+      `${COINGECKO_BASE}/coins/${id}/market_chart?vs_currency=usd&days=365&interval=daily`
+    );
+    if (!res.ok) return empty;
+    return res.json();
+  } catch { return empty; }
 }
 
 export async function getDefiLlamaData(
@@ -189,4 +242,163 @@ export async function getDefiLlamaData(
   } catch {
     return null;
   }
+}
+
+// ─── Market-wide context (Liquidität & Zyklus) ───────────────────────────────
+// Marktweite Signale, die für alle Coins gelten — werden einmal geladen & gecacht.
+
+export interface MarketContext {
+  stablecoinTotalUsd: number | null;  // aggregierte Stablecoin-Marktkap. ("dry powder")
+  stablecoinChange30d: number | null; // % Veränderung über 30 Tage (Liquiditäts-Momentum)
+  btcPiCycleRatio: number | null;     // BTC 111T-MA / (2 × 350T-MA); ≥1 = historische Top-Zone
+  // Makro (nur wenn VITE_FRED_PROXY gesetzt & Worker deployed)
+  dxyChange3m: number | null;         // % Veränderung des Dollar-Index über ~3 Monate
+  m2Yoy: number | null;               // % Veränderung der M2-Geldmenge ggü. Vorjahr
+  netLiquidityUsd: number | null;     // Fed Net Liquidity (WALCL − RRP − TGA), USD
+  netLiqChange3m: number | null;      // % Veränderung der Net Liquidity über ~3 Monate
+  nasdaqChange3m: number | null;      // % Veränderung des NASDAQ Composite über ~3 Monate (Risiko-Regime)
+  macroLiquidityBias: number | null;  // abgeleiteter annualisierter Liquiditäts-Bias
+}
+
+interface StablecoinChartPoint { totalCirculatingUSD?: { peggedUSD?: number } }
+
+const FRED_PROXY = (import.meta.env.VITE_FRED_PROXY ?? '').replace(/\/$/, '');
+
+interface FredPoint { date: number; value: number }
+interface FredObs { date: string; value: string }
+
+const DAY = 86_400_000;
+
+// FRED JSON-API parsen: { observations: [{ date, value }] }  ("." = fehlend)
+function parseFredJson(body: { observations?: FredObs[] }): FredPoint[] {
+  const out: FredPoint[] = [];
+  for (const o of body.observations ?? []) {
+    const val = parseFloat(o.value);
+    if (!o.date || !isFinite(val)) continue;
+    const ts = new Date(o.date).getTime();
+    if (isFinite(ts)) out.push({ date: ts, value: val });
+  }
+  return out;
+}
+
+function valueAtOrBefore(points: FredPoint[], targetTs: number): number | null {
+  let best: number | null = null;
+  for (const p of points) { if (p.date <= targetTs) best = p.value; else break; }
+  return best;
+}
+
+async function fetchFred(id: string): Promise<FredPoint[] | null> {
+  if (!FRED_PROXY) return null;
+  try {
+    // 500 Tage Historie: genug Puffer für den M2-Jahresvergleich, auch wenn die
+    // jüngste M2-Meldung ~6 Wochen alt ist (sonst fällt der 365-Tage-Rückblick raus).
+    const start = new Date(Date.now() - 500 * DAY).toISOString().slice(0, 10);
+    const res = await fetch(`${FRED_PROXY}/?id=${id}&start=${start}`);
+    if (!res.ok) return null;
+    return parseFredJson(await res.json());
+  } catch { return null; }
+}
+const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
+
+type MacroPick = Pick<MarketContext, 'dxyChange3m' | 'm2Yoy' | 'netLiquidityUsd' | 'netLiqChange3m' | 'nasdaqChange3m' | 'macroLiquidityBias'>;
+
+// DXY (3M) + M2 YoY + Fed Net Liquidity (3M) + Nasdaq-Risiko-Regime (3M) → Makro-Bias.
+async function getMacroLiquidity(): Promise<MacroPick> {
+  const empty: MacroPick = { dxyChange3m: null, m2Yoy: null, netLiquidityUsd: null, netLiqChange3m: null, nasdaqChange3m: null, macroLiquidityBias: null };
+  if (!FRED_PROXY) return empty;
+
+  const [dxy, m2, walcl, rrp, tga, ndq] = await Promise.all([
+    fetchFred('DTWEXBGS'), fetchFred('WM2NS'),
+    fetchFred('WALCL'), fetchFred('RRPONTSYD'), fetchFred('WTREGEN'), fetchFred('NASDAQCOM'),
+  ]);
+
+  let dxyChange3m: number | null = null;
+  if (dxy && dxy.length) {
+    const last = dxy[dxy.length - 1];
+    const past = valueAtOrBefore(dxy, last.date - 90 * DAY);
+    if (past) dxyChange3m = ((last.value - past) / past) * 100;
+  }
+
+  let m2Yoy: number | null = null;
+  if (m2 && m2.length) {
+    const last = m2[m2.length - 1];
+    const past = valueAtOrBefore(m2, last.date - 365 * DAY);
+    if (past) m2Yoy = ((last.value - past) / past) * 100;
+  }
+
+  // Fed Net Liquidity = WALCL − RRP − TGA. ⚠️ Einheiten: WALCL & TGA in Mio. USD,
+  // RRP in Mrd. USD → RRP × 1000. Anker = letztes WALCL-Datum (wöchentlich).
+  let netLiquidityUsd: number | null = null;
+  let netLiqChange3m: number | null = null;
+  if (walcl && walcl.length && rrp && rrp.length && tga && tga.length) {
+    const netAt = (ts: number): number | null => {
+      const w = valueAtOrBefore(walcl, ts), r = valueAtOrBefore(rrp, ts), t = valueAtOrBefore(tga, ts);
+      if (w == null || r == null || t == null) return null;
+      return (w - r * 1000 - t) * 1e6; // Mio. → USD
+    };
+    const anchor = walcl[walcl.length - 1].date;
+    const now = netAt(anchor);
+    const past = netAt(anchor - 90 * DAY);
+    netLiquidityUsd = now;
+    if (now != null && past != null && past !== 0) netLiqChange3m = ((now - past) / past) * 100;
+  }
+
+  // Nasdaq-Risiko-Regime (3M-Trend): Krypto ist hoch-korreliert zum Tech-Komplex.
+  let nasdaqChange3m: number | null = null;
+  if (ndq && ndq.length) {
+    const last = ndq[ndq.length - 1];
+    const past = valueAtOrBefore(ndq, last.date - 90 * DAY);
+    if (past) nasdaqChange3m = ((last.value - past) / past) * 100;
+  }
+
+  // Sub-Biases (jeweils annualisiert), dann Mittelwert der vorhandenen Signale —
+  // so verfeinern zusätzliche Reihen den Bias, statt ihn aufzublähen.
+  const subs: number[] = [];
+  if (m2Yoy != null) subs.push(clamp(((m2Yoy - 3) / 100) * 1.2, -0.06, 0.10));      // M2 ~3 % = neutral
+  if (dxyChange3m != null) subs.push(clamp(-(dxyChange3m / 100) * 1.5, -0.08, 0.08)); // steigender DXY = Gegenwind
+  if (netLiqChange3m != null) subs.push(clamp((netLiqChange3m / 100) * 1.2, -0.07, 0.10)); // steigende Net Liq = Rückenwind
+  if (nasdaqChange3m != null) subs.push(clamp((nasdaqChange3m / 100) * 0.8, -0.07, 0.08)); // steigender Nasdaq = Risk-on
+
+  const macroLiquidityBias = subs.length ? subs.reduce((a, b) => a + b, 0) / subs.length : null;
+  return { dxyChange3m, m2Yoy, netLiquidityUsd, netLiqChange3m, nasdaqChange3m, macroLiquidityBias };
+}
+
+let marketContextCache: MarketContext | null = null;
+
+export async function getMarketContext(): Promise<MarketContext> {
+  if (marketContextCache) return marketContextCache;
+  const ctx: MarketContext = {
+    stablecoinTotalUsd: null, stablecoinChange30d: null, btcPiCycleRatio: null,
+    dxyChange3m: null, m2Yoy: null, netLiquidityUsd: null, netLiqChange3m: null, nasdaqChange3m: null, macroLiquidityBias: null,
+  };
+
+  // 1) Aggregierte Stablecoin-Liquidität (DeFiLlama, CORS-frei)
+  try {
+    const res = await fetch('https://stablecoins.llama.fi/stablecoincharts/all');
+    if (res.ok) {
+      const arr: StablecoinChartPoint[] = await res.json();
+      const val = (x?: StablecoinChartPoint) => x?.totalCirculatingUSD?.peggedUSD ?? null;
+      const last = val(arr[arr.length - 1]);
+      const prev = val(arr[arr.length - 31]); // ~30 Tage zuvor
+      ctx.stablecoinTotalUsd = last;
+      if (last && prev) ctx.stablecoinChange30d = ((last - prev) / prev) * 100;
+    }
+  } catch { /* ignore */ }
+
+  // 2) BTC Pi-Cycle aus der 365-Tage-Tageskurve (marktweites Zyklus-Top-Signal)
+  try {
+    const chart = await getMarketChart('bitcoin');
+    const closes = chart.prices.map((p) => p[1]).filter((v) => isFinite(v) && v > 0);
+    if (closes.length >= 350) {
+      const avg = (n: number) => { const s = closes.slice(-n); return s.reduce((a, b) => a + b, 0) / s.length; };
+      const ma350 = avg(350);
+      if (ma350 > 0) ctx.btcPiCycleRatio = avg(111) / (2 * ma350);
+    }
+  } catch { /* ignore */ }
+
+  // 3) Makro-Liquidität (DXY + M2) via FRED-Proxy — nur wenn konfiguriert
+  Object.assign(ctx, await getMacroLiquidity());
+
+  marketContextCache = ctx;
+  return ctx;
 }

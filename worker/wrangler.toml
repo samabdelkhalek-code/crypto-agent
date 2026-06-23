@@ -1,0 +1,6 @@
+name = "cryptoagent-fred-proxy"
+main = "fred-proxy.js"
+compatibility_date = "2024-11-01"
+
+# Optional: eigene Route/Domain statt *.workers.dev
+# routes = [{ pattern = "fred.deinedomain.de/*", zone_name = "deinedomain.de" }]

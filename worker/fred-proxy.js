@@ -11,13 +11,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALLOWED = new Set([
-  'DTWEXBGS',  // Nominal Broad U.S. Dollar Index (DXY-Proxy), täglich
-  'WM2NS',     // M2 Geldmenge, wöchentlich, nicht saisonbereinigt
-  'M2SL',      // M2 Geldmenge, monatlich, saisonbereinigt
-  'WALCL',     // Fed Bilanzsumme (Net-Liquidity-Komponente)
-  'RRPONTSYD', // Overnight Reverse Repo
-  'WTREGEN',   // Treasury General Account
-  'NASDAQCOM', // NASDAQ Composite — Tech-/Risiko-Regime (Krypto ist hoch-korreliert)
+  // — Liquidität / Dollar / Tech (bestehend, von CryptoAgent genutzt) —
+  'DTWEXBGS', 'WM2NS', 'M2SL', 'WALCL', 'RRPONTSYD', 'WTREGEN', 'NASDAQCOM',
+  // — Zinsen & Fed —
+  'DFF', 'DGS2', 'DGS10', 'DGS3MO', 'T10Y2Y', 'T10Y3M', 'DFII10', 'MORTGAGE30US',
+  // — Inflation —
+  'CPIAUCSL', 'CPILFESL', 'PCEPI', 'PCEPILFE', 'PPIACO', 'T5YIFR',
+  // — Arbeitsmarkt —
+  'UNRATE', 'PAYEMS', 'ICSA', 'CCSA', 'JTSJOL', 'CES0500000003', 'SAHMREALTIME',
+  // — Wachstum / Konjunktur —
+  'GDPC1', 'RSAFS', 'INDPRO', 'UMCSENT',
+  // — Rohstoffe & Märkte —
+  'DCOILWTICO', 'DCOILBRENTEU', 'PCOPPUSDM', 'SP500', 'VIXCLS', 'BAMLH0A0HYM2',
+  // — Immobilien —
+  'HOUST', 'CSUSHPINSA',
+  // — Schulden —
+  'GFDEBTN', 'DRCCLACBS',
 ]);
 
 const CORS = {

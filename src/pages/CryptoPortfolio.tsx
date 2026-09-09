@@ -425,6 +425,27 @@ function PortfolioPanel({ onSelect }: { onSelect: (id: string) => void }) {
     else update([...holdings, { ...coin, amount, buyPrice, buyDate }]);
   };
 
+  const downloadFile = (name: string, content: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const csvCell = (v: unknown) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const importJson = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result));
+        if (Array.isArray(data)) {
+          const clean = data.filter((h): h is Holding => h && typeof h.id === 'string' && typeof h.amount === 'number' && h.amount > 0);
+          if (clean.length) update(clean);
+        }
+      } catch { /* ungültige Datei */ }
+    };
+    reader.readAsText(file);
+  };
+
   const rows = holdings.map(h => {
     const p = prices[h.id];
     const price = p?.current_price ?? 0;
@@ -448,6 +469,14 @@ function PortfolioPanel({ onSelect }: { onSelect: (id: string) => void }) {
 
   const beta = total > 0 ? rows.reduce((s, r) => s + rankBeta(r.rank) * r.value, 0) / total : 1.2;
   const proj = portfolioProjection(beta);
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  const exportCsv = () => {
+    const header = ['Coin', 'Symbol', 'Menge', 'Einstand_USD', 'Kaufdatum', 'Preis_USD', 'Wert_USD', 'GV_USD'];
+    const lines = rows.map(r => [r.h.name, r.h.symbol, r.h.amount, r.h.buyPrice ?? '', r.h.buyDate ?? '', r.price || '', r.value || '', r.pl ?? ''].map(csvCell).join(','));
+    downloadFile(`portfolio-${stamp}.csv`, [header.join(','), ...lines].join('\n'), 'text/csv;charset=utf-8');
+  };
+  const exportJson = () => downloadFile(`portfolio-${stamp}.json`, JSON.stringify(holdings, null, 2), 'application/json');
 
   return (
     <div className="mt-6 border border-emerald-500/20 p-5 bg-gradient-to-br from-emerald-600/6 to-teal-600/4" style={{ borderRadius: 10 }}>
@@ -560,6 +589,15 @@ function PortfolioPanel({ onSelect }: { onSelect: (id: string) => void }) {
           </a>
         </>
       )}
+
+      <div className="mt-3 pt-3 border-t border-white/8 flex flex-wrap items-center gap-4 text-xs">
+        {rows.length > 0 && <button onClick={exportCsv} className="text-slate-400 hover:text-white cursor-pointer bg-transparent border-none p-0">⬇ Export CSV</button>}
+        {rows.length > 0 && <button onClick={exportJson} className="text-slate-400 hover:text-white cursor-pointer bg-transparent border-none p-0">⬇ JSON-Backup</button>}
+        <label className="text-slate-400 hover:text-white cursor-pointer">
+          ⬆ Import (JSON)
+          <input type="file" accept=".json,application/json" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) importJson(f); e.currentTarget.value = ''; }} />
+        </label>
+      </div>
     </div>
   );
 }
@@ -1182,6 +1220,110 @@ function CompareTool({ onSelect }: { onSelect: (id: string) => void }) {
   );
 }
 
+// ─── Preis-Alerts ─────────────────────────────────────────────────────────────
+
+interface Alert { coinId: string; symbol: string; name: string; image: string; target: number; dir: 'above' | 'below'; createdAt: number; }
+const ALERTS_KEY = 'crypto-alerts';
+function loadAlerts(): Alert[] { try { return JSON.parse(localStorage.getItem(ALERTS_KEY) || '[]'); } catch { return []; } }
+function saveAlerts(a: Alert[]) { try { localStorage.setItem(ALERTS_KEY, JSON.stringify(a)); } catch { /* */ } }
+
+function AlertsPanel({ onSelect }: { onSelect: (id: string) => void }) {
+  const [alerts, setAlerts] = useState<Alert[]>(loadAlerts);
+  const [prices, setPrices] = useState<Record<string, number>>({});
+  const [picked, setPicked] = useState<CoinSearchResult | null>(null);
+  const [target, setTarget] = useState('');
+  const [dir, setDir] = useState<'above' | 'below'>('above');
+  const notifiedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const ids = [...new Set(alerts.map(a => a.coinId))];
+    if (!ids.length) return;
+    getMarketsByIds(ids)
+      .then(list => Object.fromEntries(list.map(c => [c.id, c.current_price])) as Record<string, number>)
+      .then(setPrices).catch(() => {});
+  }, [alerts]);
+
+  // Auslöser prüfen — reiner Seiteneffekt (Browser-Notification), kein setState.
+  useEffect(() => {
+    for (const a of alerts) {
+      const p = prices[a.coinId];
+      if (p == null) continue;
+      const hit = a.dir === 'above' ? p >= a.target : p <= a.target;
+      const k = `${a.coinId}|${a.dir}|${a.target}`;
+      if (hit && !notifiedRef.current.has(k)) {
+        notifiedRef.current.add(k);
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          try { new Notification(`🔔 ${a.name}`, { body: `${a.dir === 'above' ? 'über' : 'unter'} ${fmt(a.target)} — aktuell ${fmt(p)}` }); } catch { /* */ }
+        }
+      }
+    }
+  }, [prices, alerts]);
+
+  const update = (next: Alert[]) => { setAlerts(next); saveAlerts(next); };
+  const removeAlert = (i: number) => update(alerts.filter((_, idx) => idx !== i));
+  const addAlert = () => {
+    const t = parseFloat(target.replace(',', '.'));
+    if (!picked || !isFinite(t) || t <= 0) return;
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') { try { Notification.requestPermission(); } catch { /* */ } }
+    update([{ coinId: picked.id, symbol: picked.symbol.toUpperCase(), name: picked.name, image: picked.thumb, target: t, dir, createdAt: Date.now() }, ...alerts]);
+    setPicked(null); setTarget('');
+  };
+
+  const isHit = (a: Alert) => { const p = prices[a.coinId]; return p != null && (a.dir === 'above' ? p >= a.target : p <= a.target); };
+
+  return (
+    <div className="mt-6 border border-white/10 p-5 bg-white/3" style={{ borderRadius: 10 }}>
+      <div className="text-slate-300 text-xs uppercase tracking-widest mb-1 flex items-center gap-2">🔔 Preis-Alerts</div>
+      <p className="text-xs text-slate-500 mb-4">Benachrichtigung, wenn ein Coin eine Schwelle erreicht — solange die App offen ist. Lokal gespeichert.</p>
+
+      <div className="flex flex-col sm:flex-row gap-2 mb-4">
+        <div className="flex-1"><CoinPicker onPick={setPicked} placeholder={picked ? picked.name : 'Coin wählen…'} /></div>
+        <select value={dir} onChange={e => setDir(e.target.value as 'above' | 'below')}
+          className="bg-white/5 border border-white/10 text-white text-sm px-2 py-2 outline-none" style={{ borderRadius: 6, colorScheme: 'dark' }}>
+          <option value="above">über</option>
+          <option value="below">unter</option>
+        </select>
+        <input value={target} onChange={e => setTarget(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addAlert(); }}
+          placeholder="Preis $" inputMode="decimal"
+          className="w-full sm:w-28 bg-white/5 border border-white/10 text-white text-sm px-3 py-2 placeholder-slate-600 outline-none" style={{ borderRadius: 6 }} />
+        <button onClick={addAlert} disabled={!picked || !target}
+          className="px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shrink-0"
+          style={{ borderRadius: 6, background: 'rgba(96,165,250,0.18)', color: '#93c5fd', border: '1px solid rgba(96,165,250,0.4)' }}>
+          + Alarm
+        </button>
+      </div>
+
+      {alerts.length === 0 ? (
+        <div className="text-center py-3 text-slate-600 text-sm">Noch keine Alerts.</div>
+      ) : (
+        <div className="space-y-2">
+          {alerts.map((a, i) => {
+            const hit = isHit(a);
+            const cur = prices[a.coinId];
+            return (
+              <div key={`${a.coinId}-${a.dir}-${a.target}-${i}`}
+                className={`flex items-center gap-3 px-3 py-2.5 border ${hit ? 'bg-emerald-500/10 border-emerald-500/40' : 'bg-white/4 border-white/8'}`} style={{ borderRadius: 8 }}>
+                <button onClick={() => onSelect(a.coinId)} className="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer bg-transparent border-none p-0">
+                  {a.image ? <img src={a.image} alt="" className="w-6 h-6 shrink-0" style={{ borderRadius: '50%' }} /> : <div className="w-6 h-6 shrink-0 bg-white/10" style={{ borderRadius: '50%' }} />}
+                  <div className="min-w-0">
+                    <div className="text-white text-sm font-semibold truncate">{a.name} <span className="text-slate-600 text-xs uppercase">{a.symbol}</span></div>
+                    <div className="text-slate-500 text-xs">{a.dir === 'above' ? '▲ über' : '▼ unter'} {fmt(a.target)}{cur != null ? ` · aktuell ${fmt(cur)}` : ''}</div>
+                  </div>
+                </button>
+                {hit && <span className="text-emerald-300 text-xs font-bold shrink-0">✅ ausgelöst</span>}
+                <button onClick={() => removeAlert(i)} title="Entfernen" className="text-slate-600 hover:text-red-400 text-base cursor-pointer bg-transparent border-none px-1 shrink-0">✕</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {typeof Notification !== 'undefined' && Notification.permission === 'denied' && (
+        <div className="mt-3 text-[11px] text-slate-600">ℹ️ Browser-Benachrichtigungen sind blockiert — Alerts erscheinen nur hier in der App (grün markiert).</div>
+      )}
+    </div>
+  );
+}
+
 // ─── Top Coins Grid ───────────────────────────────────────────────────────────
 
 function TopCoinsGrid({ onSelect, onPreAdd }: { onSelect: (id: string) => void; onPreAdd: (coin: TopCoin) => void }) {
@@ -1374,8 +1516,8 @@ function IndicatorPanel({ ind, ctx }: { ind: Indicators; ctx: MarketContext | nu
           tip="Risiko-adjustierte Rendite: (1J-Return − 4%) ÷ Volatilität. >1 ist gut." />
         <IndicatorTile
           label="Abstand zum ATH" value={`${ind.drawdownFromAth.toFixed(0)}%`}
-          color={ind.drawdownFromAth < -70 ? 'text-amber-400' : ind.drawdownFromAth < -30 ? 'text-yellow-400' : 'text-emerald-400'}
-          hint={ind.drawdownFromAth < -70 ? 'tief im Drawdown' : 'nahe Hoch'}
+          color={ind.drawdownFromAth > -10 ? 'text-emerald-400' : ind.drawdownFromAth > -35 ? 'text-slate-200' : ind.drawdownFromAth > -60 ? 'text-yellow-400' : 'text-amber-400'}
+          hint={ind.drawdownFromAth > -10 ? 'nahe Hoch' : ind.drawdownFromAth > -35 ? 'moderat unter ATH' : ind.drawdownFromAth > -60 ? 'deutlich unter ATH' : 'tief im Drawdown'}
           tip="Wie weit unter dem Allzeithoch der Kurs aktuell liegt." />
         <IndicatorTile
           label="Max Drawdown (1J)" value={ind.maxDrawdown != null ? `${ind.maxDrawdown.toFixed(0)}%` : '—'}
@@ -1564,6 +1706,43 @@ function ForecastPanel({ forecast, symbol }: { forecast: Forecast; symbol: strin
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
+function DashboardAlertWidget({ coin }: { coin: CoinDetails }) {
+  const price = coin.market_data.current_price.usd;
+  const [target, setTarget] = useState('');
+  const [dir, setDir] = useState<'above' | 'below'>('above');
+  const [saved, setSaved] = useState(false);
+
+  const save = () => {
+    const t = parseFloat(target.replace(',', '.'));
+    if (!isFinite(t) || t <= 0) return;
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') { try { Notification.requestPermission(); } catch { /* */ } }
+    const a: Alert = { coinId: coin.id, symbol: coin.symbol.toUpperCase(), name: coin.name, image: coin.image.thumb, target: t, dir, createdAt: Date.now() };
+    saveAlerts([a, ...loadAlerts().filter(x => !(x.coinId === a.coinId && x.dir === a.dir && x.target === a.target))]);
+    setSaved(true); setTarget(''); setTimeout(() => setSaved(false), 2600);
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 bg-white/4 border border-white/8 px-4 py-3" style={{ borderRadius: 8 }}>
+      <span className="text-sm text-slate-300 flex items-center gap-1.5">🔔 Preis-Alert</span>
+      <select value={dir} onChange={e => setDir(e.target.value as 'above' | 'below')}
+        className="bg-white/5 border border-white/10 text-white text-sm px-2 py-1.5 outline-none" style={{ borderRadius: 6, colorScheme: 'dark' }}>
+        <option value="above">über</option>
+        <option value="below">unter</option>
+      </select>
+      <input value={target} onChange={e => setTarget(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') save(); }}
+        placeholder={fmt(price)} inputMode="decimal"
+        className="w-28 bg-white/5 border border-white/10 text-white text-sm px-3 py-1.5 placeholder-slate-600 outline-none" style={{ borderRadius: 6 }} />
+      <button onClick={save} disabled={!target}
+        className="px-3 py-1.5 text-sm font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+        style={{ borderRadius: 6, background: 'rgba(96,165,250,0.18)', color: '#93c5fd', border: '1px solid rgba(96,165,250,0.4)' }}>
+        Setzen
+      </button>
+      {saved && <span className="text-emerald-300 text-xs font-semibold">✓ Alert gespeichert</span>}
+      <span className="text-slate-600 text-xs ml-auto hidden sm:block">aktuell {fmt(price)}</span>
+    </div>
+  );
+}
+
 function Dashboard({ data, onBack, isWatched, onToggleWatch, market, fg, ctx }: {
   data: DashboardData; onBack: () => void;
   isWatched: boolean; onToggleWatch: (id: string) => void;
@@ -1661,6 +1840,9 @@ function Dashboard({ data, onBack, isWatched, onToggleWatch, market, fg, ctx }: 
           </div>
         </div>
       </div>
+
+      {/* Schneller Preis-Alert von der Coin-Seite */}
+      <DashboardAlertWidget coin={coin} />
 
       {/* Value Proposition */}
       <ValueProp coin={coin} cat={cat} defi={defi} />
@@ -1877,7 +2059,7 @@ function Dashboard({ data, onBack, isWatched, onToggleWatch, market, fg, ctx }: 
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-type State = { type: 'idle' } | { type: 'loading' } | { type: 'loaded'; data: DashboardData } | { type: 'error'; message: string };
+type State = { type: 'idle' } | { type: 'loading' } | { type: 'loaded'; data: DashboardData } | { type: 'error'; message: string; id?: string };
 
 export default function CryptoPortfolio() {
   const [state, setState] = useState<State>({ type: 'idle' });
@@ -1934,7 +2116,7 @@ export default function CryptoPortfolio() {
         return updated;
       });
     } catch (err) {
-      setState({ type: 'error', message: err instanceof Error ? err.message : 'Unbekannter Fehler' });
+      setState({ type: 'error', message: err instanceof Error ? err.message : 'Unbekannter Fehler', id });
     }
   }, []);
 
@@ -2004,6 +2186,7 @@ export default function CryptoPortfolio() {
               <MarketRegimeBanner market={market} fg={fg} ctx={ctx} />
               <PortfolioPanel onSelect={load} />
               <WatchlistPanel ids={watchlist} history={history} onSelect={load} />
+              <AlertsPanel onSelect={load} />
               <TopMovers onSelect={load} />
               <CompareTool onSelect={load} />
               <HistoryPanel history={history} onSelect={load} onClear={clearHistory} />
@@ -2021,9 +2204,18 @@ export default function CryptoPortfolio() {
             <div className="text-center py-16">
               <AlertTriangle className="mx-auto mb-3 text-red-400" size={40} />
               <div className="text-red-400 font-semibold mb-1">{state.message}</div>
-              <button onClick={goHome} className="mt-4 text-slate-500 hover:text-white text-sm underline bg-transparent border-none cursor-pointer flex items-center gap-1.5 mx-auto">
-                <ArrowLeft size={14} /> Zurück zur Suche
-              </button>
+              <div className="mt-5 flex items-center justify-center gap-3">
+                {state.id && (
+                  <button onClick={() => load(state.id!)}
+                    className="px-4 py-2 text-sm font-semibold cursor-pointer transition-colors"
+                    style={{ borderRadius: 6, background: 'rgba(96,165,250,0.18)', color: '#93c5fd', border: '1px solid rgba(96,165,250,0.4)' }}>
+                    🔄 Erneut versuchen
+                  </button>
+                )}
+                <button onClick={goHome} className="text-slate-500 hover:text-white text-sm underline bg-transparent border-none cursor-pointer flex items-center gap-1.5">
+                  <ArrowLeft size={14} /> Zurück zur Suche
+                </button>
+              </div>
             </div>
           )}
           {state.type === 'loaded' && (

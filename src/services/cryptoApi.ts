@@ -3,34 +3,57 @@
 const CG_PROXY = (import.meta.env.VITE_CG_PROXY ?? '').replace(/\/$/, '');
 const COINGECKO_BASE = CG_PROXY ? `${CG_PROXY}/api/v3` : 'https://api.coingecko.com/api/v3';
 const DEFILLAMA_BASE = 'https://api.llama.fi';
+// Optionaler kostenloser CoinGecko-Demo-Key (30 Anfragen/Min statt ~10 keyless).
+// In .env als VITE_CG_KEY setzen — wird als Query-Param angehängt (kein CORS-Preflight).
+const CG_KEY = (import.meta.env.VITE_CG_KEY ?? '').trim();
 
 let defiLlamaCache: DefiLlamaProtocol[] | null = null;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Robuster Fetch: Timeout + automatischer Retry bei Netzwerkfehlern ("Failed to
-// fetch"), 429 (Rate-Limit) und 5xx. Verhindert, dass transiente Aussetzer als
-// harte Fehler durchschlagen.
+// Robuster Fetch mit ZWEI Schutzschichten gegen CoinGeckos Limits:
+//  1) Serialisierung: alle Anfragen laufen nacheinander mit Mindestabstand
+//     (CG_GAP) durch eine Queue — so triggert die App NIE das Burst-Limit
+//     (einzelne Calls klappen, gleichzeitige nicht → das war der „Netzwerkfehler").
+//  2) Retry mit Backoff bei 429/5xx/Netzwerkaussetzern.
+let cgQueue: Promise<unknown> = Promise.resolve();
+let cgLast = 0;
+const CG_GAP = 320; // ms Mindestabstand zwischen Anfragen
+
 async function robustFetch(url: string, tries = 3, timeoutMs = 12000): Promise<Response> {
-  let lastErr: unknown;
-  for (let i = 0; i < tries; i++) {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeoutMs);
-    try {
-      const res = await fetch(url, { signal: ac.signal });
-      clearTimeout(timer);
-      if ((res.status === 429 || res.status >= 500) && i < tries - 1) {
-        await sleep(800 * (i + 1) + Math.random() * 400);
-        continue;
-      }
-      return res;
-    } catch (e) {
-      clearTimeout(timer);
-      lastErr = e;
-      if (i < tries - 1) { await sleep(800 * (i + 1) + Math.random() * 400); continue; }
+  const attempt = async (): Promise<Response> => {
+    const wait = CG_GAP - (Date.now() - cgLast);
+    if (wait > 0) await sleep(wait);
+    cgLast = Date.now();
+    // Demo-Key an CoinGecko-Anfragen anhängen (falls gesetzt) — hebt das Rate-Limit an.
+    let target = url;
+    if (CG_KEY && target.includes('api.coingecko.com')) {
+      target += (target.includes('?') ? '&' : '?') + 'x_cg_demo_api_key=' + encodeURIComponent(CG_KEY);
     }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error('Netzwerkfehler');
+    let lastErr: unknown;
+    for (let i = 0; i < tries; i++) {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      try {
+        const res = await fetch(target, { signal: ac.signal });
+        clearTimeout(timer);
+        if ((res.status === 429 || res.status >= 500) && i < tries - 1) {
+          await sleep(1000 * (i + 1) + Math.random() * 500);
+          continue;
+        }
+        return res;
+      } catch (e) {
+        clearTimeout(timer);
+        lastErr = e;
+        if (i < tries - 1) { await sleep(1000 * (i + 1) + Math.random() * 500); continue; }
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error('Netzwerkfehler');
+  };
+  // in die serielle Queue einreihen (Fehler brechen die Kette nicht)
+  const p = cgQueue.then(attempt, attempt);
+  cgQueue = p.then(() => {}, () => {});
+  return p;
 }
 
 export interface CoinSearchResult {
@@ -132,8 +155,9 @@ export async function getTopCoins(): Promise<TopCoin[]> {
     robustFetch(`${base}&page=${page}`).then(r => r.ok ? r.json() : []).catch(() => []);
   const [p1, p2] = await Promise.all([grab(1), grab(2)]);
   const merged = [...p1, ...p2];
-  if (merged.length) topCoinsCache = merged; // leeres Ergebnis nicht cachen → nächster Versuch lädt neu
-  return merged;
+  if (merged.length) { topCoinsCache = merged; cacheWrite('cg:top', merged); return merged; }
+  const cached = cacheRead<TopCoin[]>('cg:top'); // Abruf fehlgeschlagen → zuletzt bekannte Liste
+  return cached?.data ?? [];
 }
 
 // Aktuelle Marktdaten für bestimmte Coin-IDs (für den Portfolio-Tracker) — ein Call.
@@ -194,30 +218,69 @@ export async function searchCoins(query: string): Promise<CoinSearchResult[]> {
   return (data.coins || []).slice(0, 8);
 }
 
+// ─── Client-Cache mit Stale-on-Error ────────────────────────────────────────
+// Erfolgreiche Antworten werden in sessionStorage gespeichert. Bei einem
+// CoinGecko-Aussetzer/Rate-Limit werden die zuletzt geladenen Daten (auch
+// veraltet) zurückgegeben — statt eines harten Fehlers.
+const CG_FRESH_MS = 5 * 60 * 1000; // 5 Min als „frisch"
+
+function cacheRead<T>(key: string): { ts: number; data: T } | null {
+  try { const s = sessionStorage.getItem(key); return s ? JSON.parse(s) : null; } catch { return null; }
+}
+function cacheWrite(key: string, data: unknown) {
+  try { sessionStorage.setItem(key, JSON.stringify({ ts: Date.now(), data })); } catch { /* Quota/Privatmodus */ }
+}
+
+// CoinGecko liefert developer_data/community_data teils als null → absichern, damit
+// die ~24 nachgelagerten Zugriffe (Risiko, Fundamental-Score, Dashboard) nicht crashen.
+// Wird an JEDER Rückgabestelle angewandt (auch für alt-gecachte Antworten).
+function normalizeCoin(d: CoinDetails): CoinDetails {
+  const dev = { ...(d.developer_data || {}) } as CoinDetails['developer_data'];
+  if (!dev.code_additions_deletions_4_weeks) dev.code_additions_deletions_4_weeks = { additions: 0, deletions: 0 };
+  d.developer_data = dev;
+  d.community_data = (d.community_data || {}) as CoinDetails['community_data'];
+  return d;
+}
+
 export async function getCoinDetails(id: string): Promise<CoinDetails> {
+  const key = `cg:detail:${id}`;
+  const cached = cacheRead<CoinDetails>(key);
+  if (cached && Date.now() - cached.ts < CG_FRESH_MS) return normalizeCoin(cached.data); // frisch → kein API-Call
+
   let res: Response;
   try {
     res = await robustFetch(
       `${COINGECKO_BASE}/coins/${id}?localization=false&tickers=false&market_data=true&community_data=true&developer_data=true&sparkline=false`
     );
   } catch {
+    if (cached) return normalizeCoin(cached.data); // Netzwerkfehler → letzte bekannte Daten (stale)
     throw new Error('Netzwerkfehler — CoinGecko ist gerade nicht erreichbar. Bitte in ein paar Sekunden erneut versuchen.');
   }
-  if (res.status === 429) throw new Error('CoinGecko Rate-Limit erreicht — bitte ~30 Sekunden warten und erneut versuchen.');
   if (res.status === 404) throw new Error(`Token "${id}" nicht gefunden. Bitte über die Suche auswählen.`);
-  if (!res.ok) throw new Error(`Fehler beim Laden (${res.status}) — bitte erneut versuchen.`);
-  return res.json();
+  if (!res.ok) {
+    if (cached) return normalizeCoin(cached.data); // 429/5xx → stale statt Fehler
+    if (res.status === 429) throw new Error('CoinGecko Rate-Limit erreicht — bitte ~30 Sekunden warten und erneut versuchen.');
+    throw new Error(`Fehler beim Laden (${res.status}) — bitte erneut versuchen.`);
+  }
+  const data = normalizeCoin(await res.json());
+  cacheWrite(key, data);
+  return data;
 }
 
 export async function getMarketChart(id: string): Promise<MarketChart> {
+  const key = `cg:chart:${id}`;
+  const cached = cacheRead<MarketChart>(key);
+  if (cached && Date.now() - cached.ts < CG_FRESH_MS) return cached.data;
   const empty: MarketChart = { prices: [], market_caps: [], total_volumes: [] };
   try {
     const res = await robustFetch(
       `${COINGECKO_BASE}/coins/${id}/market_chart?vs_currency=usd&days=365&interval=daily`
     );
-    if (!res.ok) return empty;
-    return res.json();
-  } catch { return empty; }
+    if (!res.ok) return cached?.data ?? empty;
+    const data = await res.json();
+    cacheWrite(key, data);
+    return data;
+  } catch { return cached?.data ?? empty; }
 }
 
 export async function getDefiLlamaData(

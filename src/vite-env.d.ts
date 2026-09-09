@@ -5,6 +5,8 @@ interface ImportMetaEnv {
   readonly VITE_FRED_PROXY?: string;
   /** Basis-URL des CoinGecko-Proxy (Cloudflare Worker mit Edge-Cache). Leer = direkter Zugriff. */
   readonly VITE_CG_PROXY?: string;
+  /** Kostenloser CoinGecko-Demo-Key → höheres Rate-Limit (30/Min). Leer = keyless. */
+  readonly VITE_CG_KEY?: string;
 }
 
 interface ImportMeta {

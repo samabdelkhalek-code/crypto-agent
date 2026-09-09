@@ -596,6 +596,20 @@ const metadata: Record<string, ProjectMeta> = {
     partnerships: [],
     physicalProducts: [],
   },
+
+  'bittensor': {
+    investors: [
+      { name: 'Digital Currency Group', amount: '~500.000 TAO (~2,4% Supply)', round: 'Größter Holder', domain: 'dcg.co' },
+      { name: 'Polychain Capital', round: 'Früher Backer', domain: 'polychain.capital' },
+      { name: 'Dao5', round: 'Früher Backer', domain: 'dao5.io' },
+    ],
+    partnerships: [
+      { name: 'Grayscale', type: 'Grayscale Bittensor Trust → geplanter Spot-TAO-ETF (NYSE Arca)', domain: 'grayscale.com' },
+      { name: 'Yuma (DCG)', type: 'DCG-Tochter zur Förderung von Bittensor-Subnets + institutioneller TAO-Fonds', domain: 'dcg.co' },
+    ],
+    physicalProducts: [],
+    note: 'Bittensor (TAO) ist ein dezentrales Netzwerk für Machine-Learning-Subnets (Opentensor Foundation). Kein klassisches VC-Funding — Bitcoin-ähnliches Modell mit 21 Mio. Max-Supply und Halving. Frühe Backer (DCG, Polychain, Dao5) akkumulierten über den Markt und betreiben Validatoren.',
+  },
 };
 
 export function getProjectMeta(coinId: string): ProjectMeta | null {

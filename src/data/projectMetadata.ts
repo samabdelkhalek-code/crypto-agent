@@ -610,6 +610,171 @@ const metadata: Record<string, ProjectMeta> = {
     physicalProducts: [],
     note: 'Bittensor (TAO) ist ein dezentrales Netzwerk für Machine-Learning-Subnets (Opentensor Foundation). Kein klassisches VC-Funding — Bitcoin-ähnliches Modell mit 21 Mio. Max-Supply und Halving. Frühe Backer (DCG, Polychain, Dao5) akkumulierten über den Markt und betreiben Validatoren.',
   },
+
+  'hedera-hashgraph': {
+    investors: [],
+    partnerships: [
+      { name: 'Google', type: 'Governing-Council-Mitglied', domain: 'google.com' },
+      { name: 'IBM', type: 'Governing-Council-Mitglied', domain: 'ibm.com' },
+      { name: 'Boeing', type: 'Governing-Council-Mitglied', domain: 'boeing.com' },
+      { name: 'LG Electronics', type: 'Governing-Council-Mitglied', domain: 'lg.com' },
+      { name: 'Deutsche Telekom', type: 'Governing-Council-Mitglied', domain: 'telekom.com' },
+      { name: 'Dell Technologies', type: 'Governing-Council-Mitglied', domain: 'dell.com' },
+      { name: 'Standard Bank', type: 'Governing-Council-Mitglied', domain: 'standardbank.com' },
+    ],
+    physicalProducts: [],
+    note: 'Hedera wird von einem Governing Council aus bis zu 39 Großunternehmen & Institutionen (2025: 31 Mitglieder) mit gleichem Stimmrecht und Amtszeitbegrenzung gesteuert — kein klassisches VC-Funding.',
+  },
+
+  'crypto-com-chain': {
+    investors: [],
+    partnerships: [
+      { name: 'Visa', type: 'Crypto.com Visa-Karte', domain: 'visa.com' },
+      { name: 'Formula 1', type: 'Globaler Partner bis 2030 (Miami-GP-Titel)', domain: 'formula1.com' },
+      { name: 'UEFA Champions League', type: 'Exklusiver Krypto-Partner', domain: 'uefa.com' },
+      { name: 'UFC', type: 'Offizieller Partner', domain: 'ufc.com' },
+      { name: 'Paris Saint-Germain', type: 'Offizieller Partner', domain: 'psg.fr' },
+      { name: 'Crypto.com Arena (LA Lakers)', type: 'Namensrechte ($700M, 20 Jahre)', domain: 'crypto.com' },
+    ],
+    physicalProducts: [],
+    note: 'CRO ist der Token der Crypto.com-Chain (Cronos). Crypto.com ist für sein umfangreiches Sport-Sponsoring bekannt (F1, UFC, UEFA, PSG, NBA 76ers).',
+  },
+
+  'the-sandbox': {
+    totalFunding: '~$93M (SoftBank-geführt, 2021)',
+    investors: [
+      { name: 'SoftBank Vision Fund 2', amount: '$93M', round: 'Lead (2021)', domain: 'softbank.jp' },
+      { name: 'Animoca Brands', round: 'Muttergesellschaft', domain: 'animocabrands.com' },
+      { name: 'Samsung Next', round: 'strategisch', domain: 'samsung.com' },
+      { name: 'LG Technology Ventures', round: 'strategisch', domain: 'lg.com' },
+    ],
+    partnerships: [
+      { name: 'Adidas', type: 'Metaverse-LAND & Kollektion', domain: 'adidas.com' },
+      { name: 'Gucci', type: 'Gucci Vault Land', domain: 'gucci.com' },
+      { name: 'HSBC', type: 'Erster globaler Finanzdienstleister im Metaverse', domain: 'hsbc.com' },
+      { name: 'Ubisoft', type: 'Gaming-Partner', domain: 'ubisoft.com' },
+      { name: 'Warner Music Group', type: 'Musik-Themenwelt', domain: 'wmg.com' },
+    ],
+    physicalProducts: [],
+    note: 'Tochter von Animoca Brands. Über 400 Marken-Partner im offenen Metaverse.',
+  },
+
+  'chiliz': {
+    investors: [],
+    partnerships: [
+      { name: 'FC Barcelona', type: 'Offizielles Fan-Token', domain: 'fcbarcelona.com' },
+      { name: 'Paris Saint-Germain', type: 'Offizielles Fan-Token', domain: 'psg.fr' },
+      { name: 'Juventus', type: 'Offizielles Fan-Token', domain: 'juventus.com' },
+      { name: 'Manchester City', type: 'Offizielles Fan-Token', domain: 'mancity.com' },
+      { name: 'Atlético de Madrid', type: 'Offizielles Fan-Token', domain: 'atleticodemadrid.com' },
+      { name: 'UFC', type: 'Offizielles Fan-Token', domain: 'ufc.com' },
+    ],
+    physicalProducts: [],
+    note: 'Chiliz ist die Layer-1 für Sport & Entertainment und betreibt die Fan-Token-Plattform Socios.com — 170+ Sportpartner, >$700M an Partner ausgeschüttet.',
+  },
+
+  'ondo-finance': {
+    totalFunding: '~$20M (Series A, 2022)',
+    investors: [
+      { name: 'Founders Fund', round: 'Series-A-Lead', domain: 'foundersfund.com' },
+      { name: 'Pantera Capital', round: 'Series-A-Lead', domain: 'panteracapital.com' },
+      { name: 'Coinbase Ventures', round: 'strategisch', domain: 'coinbase.com' },
+      { name: 'Tiger Global', round: 'strategisch', domain: 'tigerglobal.com' },
+    ],
+    partnerships: [
+      { name: 'BlackRock', type: 'OUSG durch BlackRocks BUIDL besichert (größter Halter)', domain: 'blackrock.com' },
+      { name: 'Securitize', type: 'Tokenisierungs-Partner', domain: 'securitize.io' },
+    ],
+    physicalProducts: [],
+    note: 'Von Ex-Goldman-Sachs-Tradern gegründeter RWA-Leader. Wurde erster großer Krypto-Kunde von BlackRocks tokenisiertem Treasury-Fonds BUIDL.',
+  },
+
+  'eigenlayer': {
+    totalFunding: '~$150M+ (Series A + B)',
+    investors: [
+      { name: 'a16z crypto', amount: '$100M', round: 'Series B (2024)', domain: 'a16z.com' },
+      { name: 'Blockchain Capital', amount: '$50M', round: 'Series-A-Lead', domain: 'blockchain.capital' },
+      { name: 'Polychain Capital', round: 'strategisch', domain: 'polychain.capital' },
+    ],
+    partnerships: [],
+    physicalProducts: [],
+    note: 'Eigen Labs (Gründer Sreeram Kannan) ist Kategorie-König des Ethereum-Restaking. a16z war alleiniger Investor der $100M-Series-B.',
+  },
+
+  'lido-dao': {
+    totalFunding: '~$145M (2021–2022)',
+    investors: [
+      { name: 'Paradigm', amount: '$51M', round: 'Lead (2021)', domain: 'paradigm.xyz' },
+      { name: 'a16z crypto', amount: '$70M', round: '2022', domain: 'a16z.com' },
+      { name: 'Dragonfly', amount: '$24M', round: 'Treasury (2022)', domain: 'dragonfly.xyz' },
+      { name: 'Coinbase Ventures', round: 'strategisch', domain: 'coinbase.com' },
+    ],
+    partnerships: [],
+    physicalProducts: [],
+    note: 'Größtes Liquid-Staking-Protokoll für ETH. Weitere frühe Backer: Jump, Delphi Digital, DCG.',
+  },
+
+  'maker': {
+    investors: [
+      { name: 'a16z crypto', amount: '$15M (6% MKR)', round: '2018', domain: 'a16z.com' },
+      { name: 'Paradigm', round: '2019 (Asien-Expansion)', domain: 'paradigm.xyz' },
+      { name: 'Dragonfly', round: '2019 (Asien-Expansion)', domain: 'dragonfly.xyz' },
+    ],
+    partnerships: [
+      { name: 'Spark', type: 'RWA-Tokenisierung im Sky-Ökosystem', domain: 'spark.fi' },
+    ],
+    physicalProducts: [],
+    note: 'MakerDAO (2024 zu „Sky" umbenannt, MKR→SKY) steht hinter dem DAI-Stablecoin. Die frühen VCs a16z, Paradigm & Dragonfly haben ihre MKR-Bestände inzwischen komplett verkauft („de-VC-ing").',
+  },
+
+  'starknet': {
+    totalFunding: '~$287M (bis Series D, $8 Mrd. Bewertung)',
+    investors: [
+      { name: 'Paradigm', round: 'Series A/B-Lead', domain: 'paradigm.xyz' },
+      { name: 'Sequoia Capital', round: 'Series-C-Lead', domain: 'sequoiacap.com' },
+      { name: 'Coatue', round: 'Series-D-Lead', domain: 'coatue.com' },
+      { name: 'Founders Fund', round: 'Series C', domain: 'foundersfund.com' },
+      { name: 'Coinbase Ventures', round: 'Series A', domain: 'coinbase.com' },
+    ],
+    partnerships: [],
+    physicalProducts: [],
+    note: 'StarkWare (hinter Starknet) sammelte ~$287M ein und erreichte 2022 eine Bewertung von $8 Mrd. ZK-Rollup-Pionier (STARK-Proofs).',
+  },
+
+  'tezos': {
+    totalFunding: '~$232M (ICO 2017)',
+    investors: [
+      { name: 'Tezos Foundation', round: 'Stiftung / ICO 2017', domain: 'tezos.foundation' },
+    ],
+    partnerships: [
+      { name: 'Manchester United', type: 'Trainings-Trikot-Sponsor (~£20M/Jahr)', domain: 'manutd.com' },
+      { name: 'McLaren Racing', type: 'NFT-Plattform (F1)', domain: 'mclaren.com' },
+      { name: 'Société Générale', type: 'CBDC-Experimente (Forge)', domain: 'societegenerale.com' },
+      { name: 'Ubisoft', type: 'Validator (Baker) & NFTs', domain: 'ubisoft.com' },
+    ],
+    physicalProducts: [],
+    note: 'Tezos finanzierte sich 2017 per ICO ($232M an einem Tag). Self-Amending-PoS-Chain mit On-Chain-Governance.',
+  },
+
+  'algorand': {
+    investors: [],
+    partnerships: [
+      { name: 'FIFA', type: 'Offizieller Blockchain-Partner (WM 2022)', domain: 'fifa.com' },
+    ],
+    physicalProducts: [],
+    note: 'Von Turing-Preisträger & MIT-Professor Silvio Micali gegründet (Pure Proof-of-Stake, 2019). Das FIFA-Sponsoring von 2022 wurde später auf „technische Entwicklung" reduziert.',
+  },
+
+  'litecoin': {
+    investors: [],
+    partnerships: [
+      { name: 'Miami Dolphins', type: 'Offizielle Kryptowährung (NFL)', domain: 'miamidolphins.com' },
+      { name: 'UFC', type: 'Awareness-Sponsoring (2018)', domain: 'ufc.com' },
+      { name: 'Flexa', type: 'LTC-Zahlungen via SPEDN', domain: 'flexa.network' },
+    ],
+    physicalProducts: [],
+    note: 'Litecoin wurde 2011 von Charlie Lee als faire Open-Source-Abspaltung von Bitcoin gestartet — kein ICO, kein Premine, kein VC. Betreut von der Litecoin Foundation.',
+  },
 };
 
 export function getProjectMeta(coinId: string): ProjectMeta | null {

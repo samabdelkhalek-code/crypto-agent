@@ -1,0 +1,6 @@
+name = "cryptoagent-cg-proxy"
+main = "coingecko-proxy.js"
+compatibility_date = "2024-11-01"
+
+# Optionaler Demo-Key als Secret (nicht committen!):
+#   echo <KEY> | wrangler secret put CG_DEMO_KEY -c wrangler.coingecko.toml

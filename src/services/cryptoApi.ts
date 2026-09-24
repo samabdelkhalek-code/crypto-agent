@@ -1,6 +1,9 @@
-// CoinGecko optional über den Cloudflare-Proxy (Edge-Caching + Demo-Key) leiten,
-// sonst direkt. Aktiviert durch VITE_CG_PROXY in der .env.
-const CG_PROXY = (import.meta.env.VITE_CG_PROXY ?? '').replace(/\/$/, '');
+// CoinGecko läuft standardmäßig über den EIGENEN Cloudflare-Proxy (worker/coingecko-proxy.js):
+// löst das CORS-Problem (CoinGecko blockt keyless Browser-Origins), cached am Edge und hängt
+// den Demo-Key server-seitig an. Die Proxy-URL ist KEIN Secret und darf im Code stehen.
+// Überschreibbar per VITE_CG_PROXY; Wert 'direct' (oder leer) erzwingt den direkten Zugriff.
+const CG_PROXY_RAW = import.meta.env.VITE_CG_PROXY ?? 'https://cryptoagent-cg-proxy.crypto-agent.workers.dev';
+const CG_PROXY = (CG_PROXY_RAW === 'direct' ? '' : CG_PROXY_RAW).replace(/\/$/, '');
 const COINGECKO_BASE = CG_PROXY ? `${CG_PROXY}/api/v3` : 'https://api.coingecko.com/api/v3';
 const DEFILLAMA_BASE = 'https://api.llama.fi';
 // Optionaler kostenloser CoinGecko-Demo-Key (30 Anfragen/Min statt ~10 keyless).
